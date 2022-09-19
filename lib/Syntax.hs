@@ -3,7 +3,7 @@ module Syntax where
 data Program = Program [Definition] deriving (Show)
 
 type Name = String
-data Constant = ConstNumber Integer | ConstChar Char | ConstString String deriving (Show)
+data Constant = ConstNumber Integer | ConstChar [Char] | ConstString String deriving (Show)
 data IVal = IVConst Constant | IVName Name deriving (Show)
 data Definition =
   AtomicDef Name [IVal] |

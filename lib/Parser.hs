@@ -43,7 +43,7 @@ validName :: Parser String
 validName = do
   c <- letterChar
   cs <- many alphaNumChar
-  space
+  remspace
   case c:cs of
     "auto"   -> fail "auto is a reserved word"
     "extrn"  -> fail "extrn is a reserved word"
@@ -64,23 +64,22 @@ constant =
 numericConstant :: Parser Integer
 numericConstant = do
   n <- some digitChar
-  space
+  remspace
   return (read n)
 
 stringConstant :: Parser String
 stringConstant = do
   char '"'
   str <- escapeSequence `manyTill` char '"'
-  space
+  remspace
   return str
 
-charConstant :: Parser Char
+charConstant :: Parser [Char]
 charConstant = do
   char '\''
-  c <- escapeSequence
-  char '\''
-  space
-  return c
+  cs <- escapeSequence `manyTill` char '\''
+  remspace
+  return cs
 
 escapeSequence :: Parser Char
 escapeSequence = do
@@ -111,6 +110,11 @@ remspace = do
     space
   return ()
 
+remspace1 :: Parser ()
+remspace1 = do
+  spaceChar
+  remspace
+
 program :: Parser Program
 program = do
   remspace
@@ -122,15 +126,15 @@ definition1 = do
   myName <- validName
   bracket <- optional $ do
     char '['
-    space
+    remspace
     dim <- optional constant
-    space
+    remspace
     char ']'
     return dim
-  space
-  ivals <- ival `sepBy` (char ',' >> space)
+  remspace
+  ivals <- ival `sepBy` (char ',' >> remspace)
   char ';'
-  space
+  remspace
   case bracket of
     Just dim -> return (VectorDef myName dim ivals)
     Nothing  -> return (AtomicDef myName ivals)
@@ -139,12 +143,12 @@ definition2 :: Parser Definition
 definition2 = do
   myName <- validName
   char '('
-  space
-  params <- validName `sepBy` (char ',' >> space)
+  remspace
+  params <- validName `sepBy` (char ',' >> remspace)
   char ')'
-  space
+  remspace
   body <- statement
-  space
+  remspace
   return (FunctionDef myName params body)
 
 statement :: Parser Statement
@@ -167,30 +171,30 @@ autoDecl = do
   nomo <- validName
   size <- optional $ do
     char '['
-    space
+    remspace
     k <- constant
     char ']'
-    space
+    remspace
     return k
   return (nomo, size)
 
 autoStatement :: Parser Statement
 autoStatement = do
   string "auto"
-  space
-  nameSizes <- sepBy1 autoDecl (char ',' >> space)
+  remspace1
+  nameSizes <- sepBy1 autoDecl (char ',' >> remspace)
   char ';'
-  space
+  remspace
   next <- statement
   return (AutoStatement nameSizes next)
 
 extrnStatement :: Parser Statement
 extrnStatement = do
   string "extrn"
-  space1
-  names <- validName `sepBy1` (char ',' >> space)
+  remspace1
+  names <- validName `sepBy1` (char ',' >> remspace)
   char ';'
-  space
+  remspace
   next <- statement
   return (ExtrnStatement names next)
 
@@ -198,14 +202,14 @@ labelStatement :: Parser Statement
 labelStatement = do
   l <- validName
   char ':'
-  space
+  remspace
   next <- statement
   return (LabelStatement l next)
 
 caseStatement :: Parser Statement
 caseStatement = do
   string "case"
-  space
+  remspace
   v <- constant
   char ':'
   remspace
@@ -215,44 +219,44 @@ caseStatement = do
 compoundStatement :: Parser Statement
 compoundStatement = do
   char '{'
-  space
+  remspace
   stats <- many statement
   char '}'
-  space
+  remspace
   return (CompoundStatement stats)
 
 conditionalStatement :: Parser Statement
 conditionalStatement = do
   string "if"
-  space
+  remspace
   char '('
-  space
+  remspace
   e <- anyExpr
   char ')'
-  space
+  remspace
   next1 <- statement
   next2 <- optional $ do
     string "else"
-    space
+    remspace
     statement
   return (ConditionalStatement e next1 next2)
 
 whileStatement :: Parser Statement
 whileStatement = do
   string "while"
-  space
+  remspace
   char '('
-  space
+  remspace
   e <- anyExpr
   char ')'
-  space
+  remspace
   body <- statement
   return (WhileStatement e body)
 
 switchStatement :: Parser Statement
 switchStatement = do
   string "switch"
-  space
+  remspace
   e <- anyExpr
   body <- statement
   return (SwitchStatement e body)
@@ -260,25 +264,25 @@ switchStatement = do
 gotoStatement :: Parser Statement
 gotoStatement = do
   string "goto"
-  space
+  remspace
   target <- anyExpr
   char ';'
-  space
+  remspace
   return (GotoStatement target)
 
 returnStatement :: Parser Statement
 returnStatement = do
   string "return"
-  space
+  remspace
   r <- optional $ do
     char '('
-    space
+    remspace
     e <- anyExpr
     char ')'
-    space
+    remspace
     return e
   char ';'
-  space
+  remspace
   return (ReturnStatement r)
 
 rvalueStatement :: Parser Statement
@@ -291,7 +295,7 @@ rvalueStatement = do
 nullStatement :: Parser Statement
 nullStatement = do
   char ';'
-  space
+  remspace
   return NullStatement
 
 
@@ -299,7 +303,7 @@ nullStatement = do
 nameExpr :: Parser Expr
 nameExpr = do
   n <- validName
-  space
+  remspace
   return (NameExpr n)
 
 constExpr :: Parser Expr
@@ -310,10 +314,10 @@ constExpr = do
 parenExpr :: Parser Expr
 parenExpr = do
   char '('
-  space
+  remspace
   body <- anyExpr
   char ')'
-  space
+  remspace
   return (ParenExpr body)
 
 primaryExpr :: Parser Expr
@@ -325,35 +329,35 @@ primaryExpr = do
 primaryEtc1 :: Parser (Expr -> Expr)
 primaryEtc1 = do
   char '['
-  space
+  remspace
   body <- anyExpr
   char ']'
-  space
+  remspace
   return (\h -> VectorExpr h body)
 
 primaryEtc2 :: Parser (Expr -> Expr)
 primaryEtc2 = do
   char '('
-  space
-  args <- anyExpr `sepBy` (char ',' >> space)
+  remspace
+  args <- anyExpr `sepBy` (char ',' >> remspace)
   char ')'
-  space
+  remspace
   return (\h -> FunctionExpr h args)
   
 
 prefixOp :: Parser (Expr -> Expr)
 prefixOp =
-  UnaryExpr LogicNot <$ (char '!' >> space) <|>
-  UnaryExpr Negative <$ (char '-' >> space) <|>
-  StarExpr <$ (char '*' >> space) <|>
-  AmpersandExpr <$ (char '&' >> space) <|>
-  PreIncDec PlusPlus <$ (string "++" >> space) <|>
-  PreIncDec MinusMinus <$ (string "--" >> space)
+  UnaryExpr LogicNot <$ (char '!' >> remspace) <|>
+  UnaryExpr Negative <$ (char '-' >> remspace) <|>
+  StarExpr <$ (char '*' >> remspace) <|>
+  AmpersandExpr <$ (char '&' >> remspace) <|>
+  PreIncDec PlusPlus <$ (string "++" >> remspace) <|>
+  PreIncDec MinusMinus <$ (string "--" >> remspace)
 
 postfixOp :: Parser (Expr -> Expr)
 postfixOp =
-  PostIncDec PlusPlus <$ (string "++" >> space) <|>
-  PostIncDec MinusMinus <$ (string "--" >> space)
+  PostIncDec PlusPlus <$ (string "++" >> remspace) <|>
+  PostIncDec MinusMinus <$ (string "--" >> remspace)
 
 unaryExprPre :: Parser Expr
 unaryExprPre = do
@@ -376,25 +380,25 @@ unaryExpr = unaryExprPre >>= unaryExprPost
 
 multOp :: Parser (Expr -> Expr -> Expr)
 multOp =
-  BinaryExpr Modulo   <$ (char '%' >> space) <|>
-  BinaryExpr Times    <$ (char '*' >> space) <|>
-  BinaryExpr Division <$ (char '/' >> space)
+  BinaryExpr Modulo   <$ (char '%' >> remspace) <|>
+  BinaryExpr Times    <$ (char '*' >> remspace) <|>
+  BinaryExpr Division <$ (char '/' >> remspace)
 
 multChain :: Parser Expr
 multChain = chainl1 unaryExpr multOp
 
 additiveOp :: Parser (Expr -> Expr -> Expr)
 additiveOp = 
-  BinaryExpr Plus  <$ (char '+' >> space) <|>
-  BinaryExpr Minus <$ (char '-' >> space)
+  BinaryExpr Plus  <$ (char '+' >> remspace) <|>
+  BinaryExpr Minus <$ (char '-' >> remspace)
 
 additiveChain :: Parser Expr
 additiveChain = chainl1 multChain additiveOp
 
 shiftOp :: Parser (Expr -> Expr -> Expr)
 shiftOp =
-  BinaryExpr ShiftL <$ (string "<<" >> space) <|>
-  BinaryExpr ShiftR <$ (string ">>" >> space)
+  BinaryExpr ShiftL <$ (string "<<" >> remspace) <|>
+  BinaryExpr ShiftR <$ (string ">>" >> remspace)
 
 shiftChain :: Parser Expr
 shiftChain = chainl1 additiveChain shiftOp
@@ -402,32 +406,32 @@ shiftChain = chainl1 additiveChain shiftOp
 relationalChain :: Parser Expr
 relationalChain = chainl1 shiftChain op where
   op =
-    BinaryExpr LessThan <$ (char '<' >> space) <|>
-    BinaryExpr LessThanEquals <$ (string "<=" >> space) <|>
-    BinaryExpr GreaterThan <$ (char '>' >> space) <|>
-    BinaryExpr GreaterThanEquals <$ (string ">=" >> space)
+    BinaryExpr LessThan <$ (char '<' >> remspace) <|>
+    BinaryExpr LessThanEquals <$ (string "<=" >> remspace) <|>
+    BinaryExpr GreaterThan <$ (char '>' >> remspace) <|>
+    BinaryExpr GreaterThanEquals <$ (string ">=" >> remspace)
 
 equalityChain :: Parser Expr
 equalityChain = chainl1 relationalChain op where
   op =
-    BinaryExpr Equals <$ (string "==" >> space) <|>
-    BinaryExpr NotEquals <$ (string "!=" >> space)
+    BinaryExpr Equals <$ (string "==" >> remspace) <|>
+    BinaryExpr NotEquals <$ (string "!=" >> remspace)
 
 
 bitOrChain :: Parser Expr
 bitOrChain = chainl1 bitAndChain op where
-  op = BinaryExpr BitOr <$ (char '|' >> space)
+  op = BinaryExpr BitOr <$ (char '|' >> remspace)
 
 bitAndChain :: Parser Expr
 bitAndChain = chainl1 equalityChain op where
-  op = BinaryExpr BitAnd <$ (char '&' >> space)
+  op = BinaryExpr BitAnd <$ (char '&' >> remspace)
 
 -- parse an assignment operator, =, =+, etc
 assignmentOp :: Parser (Expr -> Expr -> Expr)
 assignmentOp = do
   char '='
   op <- optional binaryOp
-  space
+  remspace
   return (AssignExpr (Assignment op))
 
 assignChain :: Parser Expr
@@ -437,12 +441,13 @@ ternaries :: Parser Expr
 ternaries = do
   a <- bitOrChain 
   questionMaybe <- optional (char '?')
+  remspace
   case questionMaybe of
     Nothing -> return a
     Just _ -> do
       b <- ternaries
       char ':'
-      space
+      remspace
       c <- ternaries
       return (TernaryExpr a b c)
 
