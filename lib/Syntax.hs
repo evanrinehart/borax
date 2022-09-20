@@ -6,31 +6,32 @@ type Name = String
 data Constant = ConstNumber Integer | ConstChar [Char] | ConstString String deriving (Show)
 data IVal = IVConst Constant | IVName Name deriving (Show)
 data Definition =
-  AtomicDef Name [IVal] |
-  VectorDef Name (Maybe Constant) [IVal] |
-  FunctionDef Name [Name] Statement
+  AtomicDef Int Name [IVal] |
+  VectorDef Int Name (Maybe Constant) [IVal] |
+  FunctionDef Int Name [Name] Statement
     deriving (Show)
 
 data Statement =
-  AutoStatement [(Name, Maybe Constant)] Statement |
-  ExtrnStatement [Name] Statement |
-  LabelStatement Name Statement |
-  CaseStatement Constant Statement |
-  CompoundStatement [Statement] |
-  ConditionalStatement Expr Statement (Maybe Statement) |
-  WhileStatement Expr Statement |
-  SwitchStatement Expr Statement |
-  GotoStatement Expr |
-  ReturnStatement (Maybe Expr) |
-  RValueStatement Expr |
-  NullStatement
+  AutoStatement Int [(Name, Maybe Constant)] Statement |
+  ExtrnStatement Int [Name] Statement |
+  LabelStatement Int Name Statement |
+  CaseStatement Int Constant Statement |
+  CompoundStatement Int [Statement] |
+  ConditionalStatement Int Expr Statement (Maybe Statement) |
+  WhileStatement Int Expr Statement |
+  SwitchStatement Int Expr Statement |
+  GotoStatement Int Expr |
+  ReturnStatement Int (Maybe Expr) |
+  RValueStatement Int Expr |
+  BreakStatement Int |
+  NullStatement Int
     deriving (Show)
 
 data Expr =
   -- RValue
   ParenExpr Expr |
   ConstExpr Constant |
-  AssignExpr Assignment Expr Expr |
+  AssignExpr (Maybe BinaryOp) Expr Expr |
   PreIncDec IncDec Expr |
   PostIncDec IncDec Expr |
   AmpersandExpr Expr |
@@ -45,7 +46,6 @@ data Expr =
     deriving (Show)
 
 data IncDec = PlusPlus | MinusMinus deriving (Show)
-data Assignment = Assignment (Maybe BinaryOp) deriving (Show)
 data UnaryOp = Negative | LogicNot deriving (Show)
 data BinaryOp =
   BitOr |

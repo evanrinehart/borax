@@ -52,6 +52,7 @@ validName = do
     "while"  -> fail "while is a reserved word"
     "switch" -> fail "switch is a reserved word"
     "goto"   -> fail "goto is a reserved word"
+    "break"  -> fail "break is a reserved word"
     "return" -> fail "return is a reserved word"
     _ -> return (c : cs)
 
@@ -115,6 +116,9 @@ remspace1 = do
   spaceChar
   remspace
 
+getLineNo :: Parser Int
+getLineNo = (unPos . sourceLine) <$> getSourcePos
+
 program :: Parser Program
 program = do
   remspace
@@ -123,6 +127,7 @@ program = do
 
 definition1 :: Parser Definition
 definition1 = do
+  lineNo <- getLineNo
   myName <- validName
   bracket <- optional $ do
     char '['
@@ -136,11 +141,12 @@ definition1 = do
   char ';'
   remspace
   case bracket of
-    Just dim -> return (VectorDef myName dim ivals)
-    Nothing  -> return (AtomicDef myName ivals)
+    Just dim -> return (VectorDef lineNo myName dim ivals)
+    Nothing  -> return (AtomicDef lineNo myName ivals)
 
 definition2 :: Parser Definition
 definition2 = do
+  lineNo <- getLineNo
   myName <- validName
   char '('
   remspace
@@ -149,7 +155,7 @@ definition2 = do
   remspace
   body <- statement
   remspace
-  return (FunctionDef myName params body)
+  return (FunctionDef lineNo myName params body)
 
 statement :: Parser Statement
 statement = 
@@ -161,6 +167,7 @@ statement =
   whileStatement <|>
   switchStatement <|>
   gotoStatement <|>
+  breakStatement <|>
   returnStatement <|>
   try labelStatement <|>
   rvalueStatement <|>
@@ -180,53 +187,59 @@ autoDecl = do
 
 autoStatement :: Parser Statement
 autoStatement = do
+  lineNo <- getLineNo
   string "auto"
   remspace1
   nameSizes <- sepBy1 autoDecl (char ',' >> remspace)
   char ';'
   remspace
   next <- statement
-  return (AutoStatement nameSizes next)
+  return (AutoStatement lineNo nameSizes next)
 
 extrnStatement :: Parser Statement
 extrnStatement = do
+  lineNo <- getLineNo
   string "extrn"
   remspace1
   names <- validName `sepBy1` (char ',' >> remspace)
   char ';'
   remspace
   next <- statement
-  return (ExtrnStatement names next)
+  return (ExtrnStatement lineNo names next)
 
 labelStatement :: Parser Statement
 labelStatement = do
+  lineNo <- getLineNo
   l <- validName
   char ':'
   remspace
   next <- statement
-  return (LabelStatement l next)
+  return (LabelStatement lineNo l next)
 
 caseStatement :: Parser Statement
 caseStatement = do
+  lineNo <- getLineNo
   string "case"
   remspace
   v <- constant
   char ':'
   remspace
   next <- statement
-  return (CaseStatement v next)
+  return (CaseStatement lineNo v next)
 
 compoundStatement :: Parser Statement
 compoundStatement = do
+  lineNo <- getLineNo
   char '{'
   remspace
   stats <- many statement
   char '}'
   remspace
-  return (CompoundStatement stats)
+  return (CompoundStatement lineNo stats)
 
 conditionalStatement :: Parser Statement
 conditionalStatement = do
+  lineNo <- getLineNo
   string "if"
   remspace
   char '('
@@ -239,10 +252,11 @@ conditionalStatement = do
     string "else"
     remspace
     statement
-  return (ConditionalStatement e next1 next2)
+  return (ConditionalStatement lineNo e next1 next2)
 
 whileStatement :: Parser Statement
 whileStatement = do
+  lineNo <- getLineNo
   string "while"
   remspace
   char '('
@@ -251,27 +265,39 @@ whileStatement = do
   char ')'
   remspace
   body <- statement
-  return (WhileStatement e body)
+  return (WhileStatement lineNo e body)
 
 switchStatement :: Parser Statement
 switchStatement = do
+  lineNo <- getLineNo
   string "switch"
   remspace
   e <- anyExpr
   body <- statement
-  return (SwitchStatement e body)
+  return (SwitchStatement lineNo e body)
 
 gotoStatement :: Parser Statement
 gotoStatement = do
+  lineNo <- getLineNo
   string "goto"
   remspace
   target <- anyExpr
   char ';'
   remspace
-  return (GotoStatement target)
+  return (GotoStatement lineNo target)
+
+breakStatement :: Parser Statement
+breakStatement = do
+  lineNo <- getLineNo
+  string "break"
+  remspace
+  char ';'
+  remspace
+  return (BreakStatement lineNo)
 
 returnStatement :: Parser Statement
 returnStatement = do
+  lineNo <- getLineNo
   string "return"
   remspace
   r <- optional $ do
@@ -283,20 +309,22 @@ returnStatement = do
     return e
   char ';'
   remspace
-  return (ReturnStatement r)
+  return (ReturnStatement lineNo r)
 
 rvalueStatement :: Parser Statement
 rvalueStatement = do
+  lineNo <- getLineNo
   v <- anyExpr
   char ';'
   remspace
-  return (RValueStatement v)
+  return (RValueStatement lineNo v)
 
 nullStatement :: Parser Statement
 nullStatement = do
+  lineNo <- getLineNo
   char ';'
   remspace
-  return NullStatement
+  return (NullStatement lineNo)
 
 
 -- expression parsers
@@ -432,7 +460,7 @@ assignmentOp = do
   char '='
   op <- optional binaryOp
   remspace
-  return (AssignExpr (Assignment op))
+  return (AssignExpr op)
 
 assignChain :: Parser Expr
 assignChain = chainr1 ternaries assignmentOp
