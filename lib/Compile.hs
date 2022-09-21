@@ -35,16 +35,25 @@ data Node = Node
 
 type CodeGraph = IntMap Node
 
-
 compileFunction :: Statement -> Either (Int,String) (Int,CodeGraph)
-compileFunction stmt = answer where
-  answer = fmap (\(n,CompileData _ _ _ _ g) -> (n,g)) algorithmResults
-  algorithmResults = runExcept (runStateT (runReaderT (compile stmt 0) finalLMap) blankData)
-  blankGraph = IM.fromList [(0, (Node 0 Null))]
-  blankData  = CompileData [] M.empty Nothing 1 blankGraph
-  -- Laziness Note
-  -- provides the computed table for gotos as a readable resource to the algorithm
-  ~(Right (_, CompileData _ finalLMap _ _ _)) = algorithmResults
+compileFunction stmt =
+  let
+    -- Blank records to work with
+    blankGraph = IM.fromList [(0, (Node 0 Null))]
+    blankData  = CompileData [] M.empty Nothing 1 blankGraph
+
+    -- Run the compilation of function body. gotoTable (from the future) is provided
+    algorithmResults = runCompile blankData gotoTable (compile stmt 0)
+
+    -- ! --
+    ~(Right (_, CompileData _ gotoTable _ _ _)) = algorithmResults
+  in
+    fmap (fmap cdGraph) algorithmResults
+
+
+runCompile :: CompileData -> Map String Int -> Compile a -> Either (Int,String) (a, CompileData)
+runCompile s cheats action = runExcept (runStateT (runReaderT action cheats) s)
+
 
 -- The main compilation loop. Traverse the statements and build a flow chart.
 -- If a case statement is encountered outside a switch statement, compilation fails.
