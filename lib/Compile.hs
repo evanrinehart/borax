@@ -46,7 +46,7 @@ compileFunction stmt =
     algorithmResults = runCompile blankData gotoTable (compile stmt 0)
 
     -- ! --
-    (Right (_, CompileData _ gotoTable _ _ _)) = algorithmResults
+    Right (_, CompileData _ gotoTable _ _ _) = algorithmResults
   in
     fmap (fmap cdGraph) algorithmResults
 
