@@ -13,11 +13,11 @@ import Data.Map as M
 type Compile a = ReaderT (Map String Int) (StateT CompileData (Except (Int,String))) a
 
 data CompileData = CompileData
-  { cdBreakable :: [Int]
-  , cdLabelMap  :: Map String Int
+  { cdBreakable   :: [Int]
+  , cdLabelMap    :: Map String Int
   , cdSwitchTable :: Maybe [(Constant,Int)]
-  , cdGenerator :: Int
-  , cdGraph :: CodeGraph
+  , cdGenerator   :: Int
+  , cdGraph       :: CodeGraph
   } deriving Show
 
 data OpCode =
