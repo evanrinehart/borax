@@ -20,7 +20,7 @@ printf(fmt, x1,x2,x3,x4,x5,x6,x7,x8,x9){
   i = 0; /* fmt index */
   adx = &x1; /* argument pointer */
 loop:
-  while((c=char(fmt,i++) ) != 'x') {
+  while((c=char(fmt,i++) ) != '%') {
     if(c == '*e')
       return;
     putchar(c);

@@ -62,7 +62,7 @@ constant =
   ConstString <$> stringConstant <|>
   ConstChar <$> charConstant
 
-numericConstant :: Parser Integer
+numericConstant :: Parser Int
 numericConstant = do
   n <- some digitChar
   remspace
@@ -132,7 +132,7 @@ definition1 = do
   bracket <- optional $ do
     char '['
     remspace
-    dim <- optional constant
+    dim <- optional numericConstant
     remspace
     char ']'
     return dim
@@ -141,8 +141,8 @@ definition1 = do
   char ';'
   remspace
   case bracket of
-    Just dim -> return (VectorDef lineNo myName dim ivals)
-    Nothing  -> return (AtomicDef lineNo myName ivals)
+    Just dim -> return (DefVN lineNo myName dim ivals)
+    Nothing  -> return (DefV1 lineNo myName ivals)
 
 definition2 :: Parser Definition
 definition2 = do
@@ -155,7 +155,7 @@ definition2 = do
   remspace
   body <- statement
   remspace
-  return (FunctionDef lineNo myName params body)
+  return (DefF (FunctionDef lineNo myName params body))
 
 statement :: Parser Statement
 statement = 
@@ -173,13 +173,13 @@ statement =
   rvalueStatement <|>
   nullStatement
 
-autoDecl :: Parser (Name, Maybe Constant)
+autoDecl :: Parser (Name, Maybe Int)
 autoDecl = do
   nomo <- validName
   size <- optional $ do
     char '['
     remspace
-    k <- constant
+    k <- numericConstant
     char ']'
     remspace
     return k

@@ -3,11 +3,13 @@ module Compile where
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except
+import Control.Monad.Writer
 
 import Syntax
 
-import Data.IntMap as IM
-import Data.Map as M
+import Data.List
+import Data.IntMap as IM hiding (filter, map)
+import Data.Map as M hiding (filter, map)
 
 -- A local monad to compile a function (Reader + State + Exception)
 type Compile a = ReaderT (Map String Int) (StateT CompileData (Except (Int,String))) a
@@ -17,25 +19,37 @@ data CompileData = CompileData
   , cdLabelMap    :: Map String Int
   , cdSwitchTable :: Maybe [(Constant,Int)]
   , cdGenerator   :: Int
-  , cdGraph       :: CodeGraph
+  , cdGraph       :: CodeGraph Expr
   } deriving Show
 
-data OpCode =
+data OpCode a =
   Goto Int |
-  IfGoto Expr Int Int |
-  Switch Expr [(Constant,Int)] Int |
-  Eval Expr Int |
-  Return Expr |
+  IfGoto a Int Int |
+  Switch a [(Constant,Int)] Int |
+  Eval a Int |
+  Return a |
   Null
     deriving Show
 
-data Node = Node
+data Node a = Node
   { nodeSourceLine  :: Int
-  , nodeInstruction :: OpCode } deriving Show
+  , nodeInstruction :: OpCode a }
 
-type CodeGraph = IntMap Node
+type CodeGraph a = IntMap (Node a)
 
-compileFunction :: Statement -> Either (Int,String) (Int,CodeGraph)
+data FrameObjType = Argument | AutoVar | AutoVec deriving Show
+data FrameObj = FrameObj
+  { foName   :: String
+  , foType   :: FrameObjType
+  , foSize   :: Int
+  , foOffset :: Int }
+    deriving Show
+
+instance Show a => Show (Node a) where
+  show (Node l op) = "Node(l="++show l++", "++ showOpcode op ++ ")"
+  
+
+compileFunction :: Statement -> Either (Int,String) (Int,CodeGraph Expr)
 compileFunction stmt =
   let
     -- Blank records to work with
@@ -146,10 +160,10 @@ getSwitchTable lineNo = do
 addLabel :: String -> Int -> Compile ()
 addLabel name n = modify (\s -> s { cdLabelMap = M.insert name n (cdLabelMap s) })
 
-addNodeWithId :: Int -> Node -> Compile ()
+addNodeWithId :: Int -> Node Expr -> Compile ()
 addNodeWithId n node = modify (\s -> s { cdGraph = IM.insert n node (cdGraph s) })
 
-addNode :: Int -> OpCode -> Compile Int
+addNode :: Int -> OpCode Expr -> Compile Int
 addNode line opcode = do
   n <- generate
   addNodeWithId n (Node line opcode)
@@ -165,3 +179,83 @@ generate = do
   g <- gets cdGenerator
   modify (\s -> s { cdGenerator = g + 1 })
   return g
+
+
+-- debug print
+
+showGraph :: Show a => CodeGraph a -> String
+showGraph gr = unlines (Prelude.map f (IM.toList gr)) where
+  f (here, Node line op) = show here ++ ":\t" ++ g op where
+    g (Goto n) = "Goto " ++ show n
+    g (IfGoto ex n1 n2) = "IfGoto[" ++ show ex ++ "] " ++ show n1 ++ " " ++ show n2
+    g (Eval ex next) = "Eval[" ++ show ex ++ "] " ++ show next
+    g (Return ex) = "Return[" ++ show ex ++ "]"
+    g Null = "Null"
+    g (Switch ex table next) = "Switch[" ++ show ex ++ "] " ++ h table ++ " " ++ show next
+  h = showSwitchTable
+
+showOpcode :: Show a => OpCode a -> String
+showOpcode = g where
+  g (Goto n) = "Goto " ++ show n
+  g (IfGoto ex n1 n2) = "IfGoto[" ++ show ex ++ "] " ++ show n1 ++ " " ++ show n2
+  g (Eval ex next) = "Eval[" ++ show ex ++ "] " ++ show next
+  g (Return ex) = "Return[" ++ show ex ++ "]"
+  g Null = "Null"
+  g (Switch ex table next) = "Switch[" ++ show ex ++ "] " ++ h table ++ " " ++ show next
+  h = showSwitchTable
+
+showSwitchTable :: [(Constant,Int)] -> String
+showSwitchTable table = concat ["{",concat (intersperse "," (Prelude.map f table)),"}"] where
+  f (k, n) = showConstant k ++ "=>" ++ show n
+
+
+
+-- frame layout extractor
+analyzeFrameLayout :: FunctionDef -> [FrameObj]
+analyzeFrameLayout (FunctionDef _ _ params body) = autos ++ argos where
+  bodyAutos = autoVariablesInBody body
+  autoSize = sum (map measure bodyAutos)
+  (_, autos) = mapAccumL f (-autoSize) bodyAutos
+  argos = zipWith (\i name -> FrameObj name Argument 1 i) [1..] params
+  f b (name, Nothing)   = (b+1,    FrameObj name AutoVar 1 b)
+  f b (name, Just size) = (b+size, FrameObj name AutoVec size b)
+  measure (_, Nothing)   = 1
+  measure (_, Just size) = size
+
+-- location of arguments and autos within the frame, relative to base
+frameNamesMap :: [FrameObj] -> Map String Int
+frameNamesMap = M.fromList . map (\o -> (foName o, foOffset o))
+
+frameVectorLocations :: [FrameObj] -> [Int]
+frameVectorLocations = map foOffset . filter isAutoVec
+
+frameAutoSize :: [FrameObj] -> Int
+frameAutoSize = sum . map foSize . filter (not . isArgument)
+
+isArgument :: FrameObj -> Bool
+isArgument (FrameObj { foType = Argument }) = True
+isArgument (FrameObj { foType = _        }) = False
+
+isAutoVec :: FrameObj -> Bool
+isAutoVec (FrameObj { foType = AutoVec }) = True
+isAutoVec (FrameObj { foType = _       }) = False
+
+autoVariablesInBody :: Statement -> [(String, Maybe Int)]
+autoVariablesInBody = execWriter . go where
+  go :: Statement -> Writer [(String, Maybe Int)] ()
+  go (AutoStatement _ vars stmt) = do
+    tell vars
+--    tell (map (\(name,msize) -> (name, case msize of Nothing -> 1; Just (ConstNumber n) -> fromIntegral n+1)) vars)
+    go stmt
+  go (ExtrnStatement _ _ stmt) = go stmt
+  go (LabelStatement _ _ stmt) = go stmt
+  go (CaseStatement _ _ stmt) = go stmt
+  go (CompoundStatement _ stmts) = mapM_ go stmts
+  go (ConditionalStatement _ _ stmt Nothing) = go stmt
+  go (ConditionalStatement _ _ stmt1 (Just stmt2)) = do
+    go stmt1
+    go stmt2
+  go (WhileStatement _ _ stmt) = go stmt
+  go (SwitchStatement _ _ stmt) = go stmt
+  go _ = return ()
+
