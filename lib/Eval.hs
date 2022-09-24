@@ -17,7 +17,10 @@ import Syntax
 import Compile
 import Heap
 
+import Debug.Trace
+
 type StringMap = Map String
+-- use HashMap String
 
 data Func = Func
   { funCode :: CodeGraph Expr
@@ -26,6 +29,7 @@ data Func = Func
   , funLocals :: StringMap Int
   , funSize :: Int -- func occupies this amount of memory in words
   , funVectors :: [Int] -- for i in vecs, *(bp-i) = bp-i
+  , funStrings :: [String]
   , funStart :: Int
   } deriving Show
 
@@ -82,6 +86,7 @@ compile2 fdef = ()
 --   other functions (located in code space, has an rvalue so we can pass funcrefs around)
 
 evalR :: Monad m => Expr -> Eval m Int
+evalR (ParenExpr ex) = evalR ex
 evalR (AssignExpr Nothing e1 e2) = do
   addr <- evalL e1
   val  <- evalR e2
@@ -121,6 +126,9 @@ evalR (UnaryExpr LogicNot ex) = do
 evalR (UnaryExpr Negative ex) = do
   val <- evalR ex
   return (negate val)
+evalR (UnaryExpr BitComplement ex) = do
+  val <- evalR ex
+  return (complement val)
 evalR (BinaryExpr binop ex1 ex2) = do
   val1 <- evalR ex1
   val2 <- evalR ex2
@@ -141,17 +149,20 @@ evalR (FunctionExpr exfun exargs) = do
   argvals <- mapM evalR exargs
   callFunction funaddr argvals
 evalR (VectorExpr ex1 ex2) = do
-  base <- evalL ex1
+  base   <- evalR ex1
   offset <- evalR ex2
   loadFrom (base + offset)
 
+
+-- evaluate expression in lvalue context, i.e. compute the address of it
 evalL :: Monad m => Expr -> Eval m Int
 evalL (NameExpr name)    = decodeName name
 evalL (StarExpr ex)      = evalR ex -- section 4.2.2
 evalL (VectorExpr e1 e2) = do
-  base   <- evalL e1
+  base   <- evalR e1
   offset <- evalR e2
   return (base + offset)
+evalL (ParenExpr ex)    = evalL ex
 evalL _ = panic "illogical"
 
 callFunction :: Monad m => Int -> [Int] -> Eval m Int
@@ -240,17 +251,22 @@ pushFrame :: Monad m => Func -> [Int] -> Eval m ()
 pushFrame func args = do
   let autoSize = funAutoSize func
   let nameTable = funLocals func
+  let vectorHeads = funVectors func
   -- push args in reverse order
   -- stack[0] = base (old base)
   -- base = stack
   -- stack -= autosize + 1
   -- (push a table to name tables stack)
+  -- (initialize auto vector head)
   -- enter new func
   oldBase <- gets machBasePtr
   stack   <- gets machStackPtr
   heapPoke stack oldBase
   modify (\mch -> mch { machBasePtr = stack, machStackPtr = stack - autoSize - 1 })
   modify (\mch -> mch { machFrames = nameTable : machFrames mch })
+  base <- gets machBasePtr
+  forM_ vectorHeads $ \offset -> do
+    heapPoke (base + offset) (base + offset + 1)
 
 
 popFrame :: Monad m => Eval m ()
@@ -281,7 +297,7 @@ arith2 binop val1 val2 = case binop of
   GreaterThan -> if val1 > val2 then 1 else 0
   GreaterThanEquals -> if val1 >= val2 then 1 else 0
   ShiftL -> val1 `shiftL` val2
-  ShiftR -> val1 `shiftR` val2
+  ShiftR -> val1 `rawShiftR` val2
   Plus -> val1 + val2
   Minus -> val1 - val2
   Modulo -> val1 `mod` val2
@@ -289,15 +305,31 @@ arith2 binop val1 val2 = case binop of
   Division -> val1 `div` val2
 
 
+{-The binary operators << and >> are left and right shift respec-
+tively. The left rvalue operand is taken as a bit pattern. The
+right operand is taken as an integer shift count.  The result is
+the bit pattern shifted by the shift count. Vacated bits are
+filled with zeros. The result is undefined if the shift count is
+negative or larger than an object length. -}
+rawShiftR :: Int -> Int -> Int
+rawShiftR i s = fromIntegral (let w = fromIntegral i :: Word in w `shiftR` s)
 
 
 runShot :: Func -> IO ()
 runShot func = do
+  let magicLocation = 10
   let mch = blankMachine
-              { machFuncs = IM.singleton 10 func
-              , machNames = M.singleton "main" 10 }
+              { machFuncs = IM.singleton magicLocation func
+              , machNames = M.singleton "main" magicLocation }
   result <- bootUp mch
   case result of
     Left msg -> putStrLn msg
     Right i  -> do
       putStrLn ("exited with value " ++ show i)
+
+
+-- pack and place strings in the heap, return the directory to find them.
+-- strategy, the stack begins at 9999 and grows down. We will begin placing
+-- constant data at memory location 100. Anything already there is clobbered.
+--compileStrings :: [String] -> Machine (Map String Int)
+--compileStrings strs = 
