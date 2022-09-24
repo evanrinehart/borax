@@ -53,7 +53,7 @@ data Expr =
     deriving (Show)
 
 data IncDec = PlusPlus | MinusMinus deriving (Show)
-data UnaryOp = Negative | LogicNot deriving (Show)
+data UnaryOp = Negative | LogicNot | BitComplement deriving (Show)
 data BinaryOp =
   BitOr |
   BitAnd |
@@ -136,7 +136,7 @@ showExpr = execWriter . go where
     tell "*"
     go ex
   go (UnaryExpr unop ex) = do
-    tell (case unop of Negative -> "-"; LogicNot -> "!")
+    tell (case unop of Negative -> "-"; LogicNot -> "!"; BitComplement -> "~")
     go ex
   go (BinaryExpr op ex1 ex2) = do
     go ex1

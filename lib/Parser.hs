@@ -377,6 +377,7 @@ prefixOp :: Parser (Expr -> Expr)
 prefixOp =
   UnaryExpr LogicNot <$ (char '!' >> remspace) <|>
   UnaryExpr Negative <$ (char '-' >> remspace) <|>
+  UnaryExpr BitComplement <$ (char '~' >> remspace) <|>
   StarExpr <$ (char '*' >> remspace) <|>
   AmpersandExpr <$ (char '&' >> remspace) <|>
   PreIncDec PlusPlus <$ (string "++" >> remspace) <|>
