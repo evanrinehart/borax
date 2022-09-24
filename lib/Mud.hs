@@ -47,32 +47,73 @@ oneShot path = do
   src <- readFile path
   case parse path src of
     Left err -> printError err
-    Right (Program [DefF fdef]) -> do
+    Right (Program (DefF fdef:_)) -> do
       let FunctionDef _ funcname params body = fdef
       putStrLn ("funcname: " ++ funcname)
       putStrLn ("params: " ++ show params)
-      case compileFunction body of
+      case makeFunc fdef of
         Left (line,msg) -> print (line,msg)
-        Right (start,gr) -> do
-          putStrLn "body:"
-          putStr (showGraph gr)
-          putStrLn ("start node: " ++ show start)
-          let layout = analyzeFrameLayout fdef
-          let autoSize = frameAutoSize layout
-          let extlist = extrnVariablesInBody body
-          let localMap = frameNamesMap layout
-          let numlabels = length (labelsUsedInBody body)
-          let vecs = frameVectorLocations layout
-          print ("layout", layout)
-          print ("local map", localMap)
-          print ("labels", numlabels)
-          putStrLn "\nstarting program..."
-          let func = Func gr autoSize extlist localMap (1 + numlabels) vecs start
+        Right func -> do
+          putStrLn (showGraph showExpr (funCode func))
+          print func
           runShot func
+        
 
---frameNamesMap :: [FrameObj] -> Map String Int
---frameVectorLocations :: [FrameObj] -> [Int]
---frameAutoSize :: [FrameObj] -> Int
+makeFunc :: FunctionDef -> Either (Int,String) Func
+makeFunc fdef@(FunctionDef _ funcname params body) = case compileFunction body of
+  Left (line,msg)  -> Left (line,msg)
+  Right (start,gr) -> do
+    let extList = extrnVariablesInBody body
+    let strings = stringsInCode gr
+    let layout = analyzeFrameLayout fdef
+    let autoSize = frameAutoSize layout
+    let localMap = frameNamesMap layout
+    let vecs = frameVectorLocations layout
+    let nlabels = length (labelsUsedInBody body)
+    return $ Func gr autoSize extList localMap (1 + nlabels) vecs strings start
+
+stringsInCode :: CodeGraph Expr -> [String]
+stringsInCode gr = foldMap f gr where
+  f (Node _ (IfGoto ex _ _)) = stringsInExpr ex
+  f (Node _ (Switch ex _ _)) = stringsInExpr ex
+  f (Node _ (Eval ex _))     = stringsInExpr ex
+  f (Node _ (Return ex))     = stringsInExpr ex
+  f _ = []
+
+
+stringsInExpr :: Expr -> [String]
+stringsInExpr = execWriter . go where
+  go :: Expr -> Writer [String] ()
+  go (ParenExpr ex) = go ex
+  go (ConstExpr (ConstString str)) = tell [str]
+  go (ConstExpr _) = return ()
+  go (AssignExpr _ e1 e2) = do
+    go e1
+    go e2
+  go (PreIncDec _ ex) = go ex
+  go (PostIncDec _ ex) = go ex
+  go (AmpersandExpr ex) = go ex
+  go (UnaryExpr _ ex) = go ex
+  go (BinaryExpr _ e1 e2) = do
+    go e1
+    go e2
+  go (TernaryExpr e1 e2 e3) = do
+    go e1
+    go e2
+    go e3
+  go (FunctionExpr e es) = do
+    go e
+    mapM_ go es
+  go (NameExpr _) = return ()
+  go (StarExpr ex) = go ex
+  go (VectorExpr e1 e2) = do
+    go e1
+    go e2
+
+-- parse file to get all the defs
+-- within the file you have many string constants which need to be merged into the global dir
+--   string constants need to be packed and stored in memory, remember where
+-- 
 
 
 
