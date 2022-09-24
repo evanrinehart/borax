@@ -183,15 +183,15 @@ generate = do
 
 -- debug print
 
-showGraph :: Show a => CodeGraph a -> String
-showGraph gr = unlines (Prelude.map f (IM.toList gr)) where
+showGraph :: (a -> String) -> CodeGraph a -> String
+showGraph sh gr = unlines (Prelude.map f (IM.toList gr)) where
   f (here, Node line op) = show here ++ ":\t" ++ g op where
     g (Goto n) = "Goto " ++ show n
-    g (IfGoto ex n1 n2) = "IfGoto[" ++ show ex ++ "] " ++ show n1 ++ " " ++ show n2
-    g (Eval ex next) = "Eval[" ++ show ex ++ "] " ++ show next
-    g (Return ex) = "Return[" ++ show ex ++ "]"
+    g (IfGoto ex n1 n2) = "IfGoto[" ++ sh ex ++ "] " ++ show n1 ++ " " ++ show n2
+    g (Eval ex next) = "Eval[" ++ sh ex ++ "] " ++ show next
+    g (Return ex) = "Return[" ++ sh ex ++ "]"
     g Null = "Null"
-    g (Switch ex table next) = "Switch[" ++ show ex ++ "] " ++ h table ++ " " ++ show next
+    g (Switch ex table next) = "Switch[" ++ sh ex ++ "] " ++ h table ++ " " ++ show next
   h = showSwitchTable
 
 showOpcode :: Show a => OpCode a -> String
@@ -210,17 +210,31 @@ showSwitchTable table = concat ["{",concat (intersperse "," (Prelude.map f table
 
 
 
--- frame layout extractor
+-- generate frame layout. if args are x, y and auto a, b[4], c, d
+-- then we configure the stack during a call like (stack grows down)
+--       y
+-- +1 -> x
+-- bp -> oldbase
+-- -1 -> d
+--       c
+--       bonus
+--       b[3]
+--       b[2]
+--       b[1]
+--       b[0]
+-- -8 -> b     (initialize to -8 + 1)
+-- -9 -> a
+-- sp -> \
 analyzeFrameLayout :: FunctionDef -> [FrameObj]
 analyzeFrameLayout (FunctionDef _ _ params body) = autos ++ argos where
   bodyAutos = autoVariablesInBody body
   autoSize = sum (map measure bodyAutos)
   (_, autos) = mapAccumL f (-autoSize) bodyAutos
-  argos = zipWith (\i name -> FrameObj name Argument 1 i) [1..] params
-  f b (name, Nothing)   = (b+1,    FrameObj name AutoVar 1 b)
-  f b (name, Just size) = (b+size, FrameObj name AutoVec size b)
+  f b (name, Nothing)   = (b+1,      FrameObj name AutoVar 1 b)
+  f b (name, Just size) = (b+size+2, FrameObj name AutoVec (size+2) b)
   measure (_, Nothing)   = 1
-  measure (_, Just size) = size
+  measure (_, Just size) = size + 2 -- 1 ptr var and 1 bonus cell at the end
+  argos = zipWith (\i name -> FrameObj name Argument 1 i) [1..] params
 
 -- location of arguments and autos within the frame, relative to base
 frameNamesMap :: [FrameObj] -> Map String Int
