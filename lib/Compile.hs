@@ -13,6 +13,11 @@ import Data.List
 import Data.IntMap as IM hiding (filter, map)
 import Data.Map as M hiding (filter, map)
 
+{- TODO
+ - consistency check for case statements outside a switch
+ - if we take care of this prior to `compile' it simplifies the process
+ -}
+
 -- compiled source file
 -- if a = Int, it's ready to run
 -- if a = LinkMe, global entities have unresolved initializers
@@ -25,8 +30,8 @@ data Borate a = Borate
 data LinkMe = LMJust Int | LMString String | LMVariable String
   deriving Show
 
--- A local monad to compile a function (Reader + State + Exception)
-type Compile a = ReaderT (Map String Int) (StateT CompileData (Except (Int,String))) a
+-- A local monad to compile a function (Reader + State)
+type Compile a = ReaderT (Map String Int) (State CompileData) a
 
 data CompileData = CompileData
   { cdBreakable   :: [Int]
@@ -76,7 +81,7 @@ instance Show a => Show (Node a) where
   show (Node l op) = "Node(l="++show l++", "++ showOpcode op ++ ")"
   
 
-compileFunction :: Statement -> Either (Int,String) (Int,CodeGraph Expr)
+compileFunction :: Statement -> (Int, CodeGraph Expr)
 compileFunction stmt =
   let
     -- Blank records to work with
@@ -87,13 +92,13 @@ compileFunction stmt =
     algorithmResults = runCompile blankData gotoTable (compileStatement stmt 0)
 
     -- ! --
-    Right (_, CompileData _ gotoTable _ _ _) = algorithmResults
+    (_, CompileData _ gotoTable _ _ _) = algorithmResults
   in
-    fmap (fmap cdGraph) algorithmResults
+    fmap cdGraph algorithmResults
 
 
-runCompile :: CompileData -> Map String Int -> Compile a -> Either (Int,String) (a, CompileData)
-runCompile s cheats action = runExcept (runStateT (runReaderT action cheats) s)
+runCompile :: CompileData -> Map String Int -> Compile a -> (a, CompileData)
+runCompile s cheats action = runState (runReaderT action cheats) s
 
 
 -- The main compilation loop. Traverse the statements and build a flow chart.
@@ -182,7 +187,7 @@ getSwitchTable :: Int -> Compile [(Constant,Int)]
 getSwitchTable lineNo = do
   mtable <- gets cdSwitchTable
   case mtable of
-    Nothing    -> throwError (lineNo, "No switch statement found here")
+    Nothing    -> error "getSwitchTable, no switch here"
     Just table -> return table
 
 addLabel :: String -> Int -> Compile ()
@@ -304,7 +309,7 @@ autoVariablesInBody = execWriter . go where
 
 
 
-compile :: Boron -> Either (Int,String) (Borate LinkMe)
+compile :: Boron -> Either String (Borate LinkMe)
 compile (Boron defs) = go [] [] [] defs where
   go as vs fs [] = return (Borate as vs fs)
   go as vs fs (DefV1 _ name Nothing : more) = go (x:as) vs fs more where
@@ -315,30 +320,29 @@ compile (Boron defs) = go [] [] [] defs where
     x = (name, length ivals, map ivalToLinkMe ivals)
   go as vs fs (DefVN _ name (Just size) ivals : more) = go as (x:vs) fs more where
     x = (name, size, map ivalToLinkMe ivals)
-  go as vs fs (DefF fdef : more) = makeFunc fdef >>= \func -> go as vs (func : fs) more
+  go as vs fs (DefF fdef : more) = let func = makeFunc fdef in go as vs (func : fs) more
 
 -- recover everything you need to know about a function from its syntax
-makeFunc :: FunctionDef -> Either (Int,String) Func
-makeFunc fdef@(FunctionDef _ funcname params body) = case compileFunction body of
-  Left (line,msg)  -> Left (line,msg)
-  Right (start,gr) -> do
-    let extList = extrnVariablesInBody body
-    let strings = stringsInCode gr
-    let layout = analyzeFrameLayout fdef
-    let autoSize = frameAutoSize layout
-    let localMap = frameNamesMap layout
-    let vecs = frameVectorLocations layout
-    let nlabels = length (labelsUsedInBody body)
-    return $ Func
-      { funName = funcname
-      , funCode = gr
-      , funAutoSize = autoSize
-      , funExterns = extList
-      , funLocals = localMap
-      , funSize = (nlabels + 1)
-      , funVectors = vecs
-      , funStrings = strings
-      , funStart = start }
+makeFunc :: FunctionDef -> Func
+makeFunc fdef@(FunctionDef _ funcname params body) =
+  let (start,gr) = compileFunction body
+      extList = extrnVariablesInBody body
+      strings = stringsInCode gr
+      layout = analyzeFrameLayout fdef
+      autoSize = frameAutoSize layout
+      localMap = frameNamesMap layout
+      vecs = frameVectorLocations layout
+      nlabels = length (labelsUsedInBody body)
+  in Func
+    { funName = funcname
+    , funCode = gr
+    , funAutoSize = autoSize
+    , funExterns = extList
+    , funLocals = localMap
+    , funSize = (nlabels + 1)
+    , funVectors = vecs
+    , funStrings = strings
+    , funStart = start }
 
 
 ivalToLinkMe :: IVal -> LinkMe
