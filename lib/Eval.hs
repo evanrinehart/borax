@@ -56,8 +56,8 @@ bootUp :: Machine -> IO (Either String Int)
 bootUp mch = flip evalStateT mch . runExceptT $ do
   mainAddr <- decodeName "main"
   r <- callFunction mainAddr []
-  mem <- gets machMemory
-  liftIO (print mem)
+  --mem <- gets machMemory
+  --liftIO (print mem)
   return r
 
 
