@@ -17,22 +17,18 @@ import Syntax
 import Compile
 import Heap
 import PackedString
+import Link
 
 import Debug.Trace
-
-type StringMap = Map String
--- use HashMap String
 
 data Machine = Machine
   { machMemory  :: Heap
   , machStackPtr :: Int
   , machBasePtr :: Int -- base + 0 is argument 1
-  , machFrames :: [StringMap Int] -- name => offset
+  , machFrames :: [Map String Int] -- name => offset
   , machFuncs :: IntMap Func      -- addr => func
-  , machDrivers :: IntMap ()
-  , machNames :: StringMap Int --   name => addr
-  , machStrings :: StringMap Int -- string => addr
-  , machOverlayIO :: IntMap Int --  addr => driver number
+  , machNames :: Map String Int --   name => addr
+  , machStrings :: Map String Int -- string => addr
   } deriving Show
 
 type Eval m a = ExceptT String (StateT Machine m) a
@@ -43,10 +39,18 @@ blankMachine = Machine
   , machBasePtr = 9999
   , machFrames = [M.empty]
   , machFuncs = IM.empty
-  , machDrivers = IM.empty
   , machNames = M.empty
-  , machStrings = M.empty 
-  , machOverlayIO = IM.empty }
+  , machStrings = M.empty }
+
+fromBorax :: Borax -> Machine
+fromBorax bx = Machine
+  { machMemory   = bxHeap bx
+  , machStackPtr = 9999
+  , machBasePtr  = 9999
+  , machFrames   = [M.empty]
+  , machFuncs    = bxFuncs bx
+  , machNames    = bxNames bx
+  , machStrings =  bxStrings bx }
 
 bootUp :: Machine -> IO (Either String Int)
 bootUp mch = flip evalStateT mch . runExceptT $ do

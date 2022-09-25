@@ -2,6 +2,8 @@ module Link where
 
 import Data.Map (Map, (!))
 import qualified Data.Map as M
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IM
 
 import PackedString
 import Heap
@@ -9,7 +11,7 @@ import Compile
 
 data Borax = Borax
   { bxHeap :: Heap
-  , bxFuncs :: Map Int Func
+  , bxFuncs :: IntMap Func
   , bxNames :: Map String Int
   , bxStrings :: Map String Int
   } deriving Show
@@ -39,7 +41,7 @@ link bors = do
   -- disallow missing entities (dangling reference in initializer or functions)
 
   let funcs = concatMap borFuncs bors
-  let funcByAddr = M.fromList (map (\fun -> (locs M.! funName fun, fun)) funcs)
+  let funcByAddr = IM.fromList (map (\fun -> (locs M.! funName fun, fun)) funcs)
 
   let entNames = M.keys locs
   let genv :: Map String (GlobalEntity Int)
