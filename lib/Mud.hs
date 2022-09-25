@@ -119,7 +119,7 @@ borateRawExtrns :: Borate LinkMe -> [GlobalEntity LinkMe]
 borateRawExtrns (Borate as vs fs) = go where
   go = map atomNames as ++ map vectorNames vs ++ map funNames fs
   atomNames (name, link)          = GlobalEntity name 1 GloAtom [link]
-  vectorNames (name, size, links) = GlobalEntity name size GloVec links
+  vectorNames (name, size, links) = GlobalEntity name (size+2) GloVec links
   funNames fun                    = GlobalEntity (funName fun) (funSize fun) GloFun [minus1]
   minus1 = LMJust (-1)
   
@@ -158,7 +158,7 @@ resolveInitializer genv strings mmap (LMVariable name) = case M.lookup name genv
   Nothing -> error ("global entity missing: " ++ name)
   Just (GlobalEntity _ size ty (link:_)) -> case ty of
     GloAtom -> resolveInitializer genv strings mmap link
-    GloVec  -> mmap M.! name
+    GloVec  -> mmap M.! name + 1
     GloFun  -> -1
 
 -- 0. locate global entities in memory, generate the map
@@ -205,9 +205,14 @@ link bors = do
   let bodyOf :: GlobalEntity Int -> [Int]
       bodyOf glo = gloInit glo
 
-  let heap = foldl (\h name -> Heap.memcpy (locs ! name) (bodyOf (genv ! name)) h) heap1 entNames
+  let heap = foldl (\h name -> putGlobal (locs ! name) (genv ! name) h) heap1 entNames
   return (Borax heap funcByAddr locs stringLocs)
   
+
+putGlobal :: Int -> GlobalEntity Int -> Heap -> Heap
+putGlobal ptr (GlobalEntity _ size GloAtom [n]) h = Heap.poke ptr n h
+putGlobal ptr (GlobalEntity _ size GloVec ns) h   = Heap.memcpy ptr ((ptr+1) : ns) h
+putGlobal ptr (GlobalEntity _ size GloFun [-1]) h = Heap.poke ptr (-1) h
 
 
 
