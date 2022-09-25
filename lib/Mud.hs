@@ -197,13 +197,10 @@ link bors = do
 
   let funcs = concatMap borFuncs bors
   let funcByAddr = M.fromList (map (\fun -> (locs M.! funName fun, fun)) funcs)
-  -- place entities in heap
 
   let entNames = M.keys locs
   let genv :: Map String (GlobalEntity Int)
       genv = fmap (\glo -> glo { gloInit = map (resolveInitializer genvNeedsLink stringLocs locs) (gloInit glo)}) genvNeedsLink
-  let bodyOf :: GlobalEntity Int -> [Int]
-      bodyOf glo = gloInit glo
 
   let heap = foldl (\h name -> putGlobal (locs ! name) (genv ! name) h) heap1 entNames
   return (Borax heap funcByAddr locs stringLocs)
