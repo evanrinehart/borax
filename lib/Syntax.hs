@@ -10,7 +10,7 @@ type Name = String
 data Constant = ConstNumber Int | ConstChar [Char] | ConstString String deriving (Show)
 data IVal = IVConst Constant | IVName Name deriving (Show)
 data Definition =
-  DefV1 Int Name [IVal] |
+  DefV1 Int Name (Maybe IVal) |
   DefVN Int Name (Maybe Int) [IVal] |
   DefF FunctionDef
     deriving (Show)

@@ -41,8 +41,8 @@ ival =
 
 validName :: Parser String
 validName = do
-  c <- letterChar
-  cs <- many alphaNumChar
+  c <- letterChar <|> char '_' <|> char '.'
+  cs <- many (alphaNumChar <|> char '_' <|> char '.')
   remspace
   case c:cs of
     "auto"   -> fail "auto is a reserved word"
@@ -64,9 +64,15 @@ constant =
 
 numericConstant :: Parser Int
 numericConstant = do
-  n <- some digitChar
+  ds <- some digitChar
   remspace
-  return (read n)
+  case ds of
+    "0"        -> return 0
+    ('0':more) -> return (funnyOctal more)
+    _          -> return (read ds)
+
+funnyOctal :: String -> Int
+funnyOctal = foldl1 (\a o -> a*8 + o) . map digitToInt
 
 stringConstant :: Parser String
 stringConstant = do
@@ -122,27 +128,34 @@ getLineNo = (unPos . sourceLine) <$> getSourcePos
 program :: Parser Program
 program = do
   remspace
-  defs <- many (try definition1 <|> definition2)
+  defs <- many (try definition0 <|> try definition1 <|> definition2)
   return (Program defs)
+
+definition0 :: Parser Definition
+definition0 = do
+  lineNo <- getLineNo
+  myName <- validName
+  remspace
+  maybeIVal <- optional ival
+  remspace
+  char ';'
+  remspace
+  return (DefV1 lineNo myName maybeIVal)
 
 definition1 :: Parser Definition
 definition1 = do
   lineNo <- getLineNo
   myName <- validName
-  bracket <- optional $ do
-    char '['
-    remspace
-    dim <- optional numericConstant
-    remspace
-    char ']'
-    return dim
+  char '['
+  remspace
+  maybeDim <- optional numericConstant
+  remspace
+  char ']'
   remspace
   ivals <- ival `sepBy` (char ',' >> remspace)
   char ';'
   remspace
-  case bracket of
-    Just dim -> return (DefVN lineNo myName dim ivals)
-    Nothing  -> return (DefV1 lineNo myName ivals)
+  return (DefVN lineNo myName maybeDim ivals)
 
 definition2 :: Parser Definition
 definition2 = do

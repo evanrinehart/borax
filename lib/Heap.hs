@@ -5,7 +5,7 @@ module Heap where
 -- how a string is packed and encoded in memory isn't determined.
 -- use library functions to access the characters of a string.
 
-import Data.IntMap as IM hiding (map)
+import Data.IntMap as IM hiding (map, foldl)
 
 type Heap = IntMap Int
 
@@ -23,3 +23,6 @@ dump = IM.toList
 
 load :: [(Int,Int)] -> Heap
 load = IM.fromList
+
+memcpy :: Int -> [Int] -> Heap -> Heap
+memcpy base ws h = foldl (\h (x,i) -> IM.insert i x h) h (zip ws [base..])

@@ -16,6 +16,7 @@ import Data.Bits
 import Syntax
 import Compile
 import Heap
+import PackedString
 
 import Debug.Trace
 
@@ -23,7 +24,8 @@ type StringMap = Map String
 -- use HashMap String
 
 data Func = Func
-  { funCode :: CodeGraph Expr
+  { funName :: String
+  , funCode :: CodeGraph Expr
   , funAutoSize :: Int
   , funExterns :: [String]
   , funLocals :: StringMap Int
@@ -67,10 +69,6 @@ bootUp mch = flip evalStateT mch . runExceptT $ do
   return r
 
 
-  
-compile2 :: FunctionDef -> ()
-compile2 fdef = ()
-  
 
 -- to run the code we need a interpreter loop that can
 -- access and modify memory
@@ -276,9 +274,6 @@ popFrame = do
   oldBase <- heapPeek bp
   modify (\mch -> mch { machBasePtr =  oldBase })
   modify (\mch -> mch { machFrames = drop 1 (machFrames mch) })
-
-packChars :: [Char] -> Int
-packChars = foldl1 (\a x -> a*8 + x) . map ord
 
 heapPeek :: Monad m => Int -> Eval m Int
 heapPeek addr = gets ((`Heap.peek` addr) . machMemory)
