@@ -20,4 +20,4 @@ However some features eliminated in the later document were retained.
 
 - Octal numeric constants may include 8s and 9s, i.e. `09` = `011`.
 
-Code specimen are taken from *Users' Reference to B (1972)* by Ken Thompson.
+Code specimen are taken from *Users' Reference to B* (1972) by Ken Thompson.
