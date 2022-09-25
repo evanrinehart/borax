@@ -12,8 +12,8 @@ import Data.Char
 
 -- 5 ascii characters fit in a 36-bit word
 charsPerWord = 5
-bitsPerChar = 7
-base = 2 ^ bitsPerChar
+bitsPerChar  = 7
+base         = 2 ^ bitsPerChar
 
 -- if *e appears in the string, truncate string there (includes *e)
 -- otherwise append *e to the end
@@ -35,7 +35,7 @@ unpackChars = reverse . f where
   f 0 = []
   f i = let (q,r) = i `divMod` base in chr r : f q
 
--- pack characters into numbers up to 4 at a time
+-- pack characters into numbers up to charsPerWord at a time
 packString :: String -> [Int]
 packString str = case splitAt charsPerWord str of
   ([],[])   -> []
