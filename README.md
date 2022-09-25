@@ -9,10 +9,12 @@ Certain features were incorporated from *Bell Laboratories Computing Science
 Technical Report #8: The Programming Language B (1973) (Brian Kernighan, Steve Johnson).*
 Namely
 
-- Bitwise complement operator ~
+- Bitwise complement operator `~`
+- `break;` statement performs the equivalent of a goto out of nearest
+switch or while statement.
 - Automatic vector declarations use square brackets to indicate size.
 - Vectors declared with size N actually hold N+1 words. The bonus 1 word
-of space can be ignored or not.
+of space can be ignored or not. In particular vect[N] is not an error.
 
 However some features eliminated in the later document were retained.
 
