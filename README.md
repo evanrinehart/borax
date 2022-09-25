@@ -1,4 +1,4 @@
-# borax
+# Borax
 
 Parser and interpreter for the c. 1970 programming language B.
 
