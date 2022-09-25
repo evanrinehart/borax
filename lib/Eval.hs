@@ -210,8 +210,7 @@ storeAt addr val = do
   
 
 findString :: Monad m => String -> Eval m Int
-findString str = do
-  panic "findString X_X"
+findString str = gets ((M.! str) . machStrings)
 
 findFunction :: Monad m => Int -> Eval m Func
 findFunction addr = gets ((IM.lookup addr) . machFuncs) >>= \case
