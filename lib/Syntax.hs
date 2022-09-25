@@ -4,7 +4,7 @@ import Control.Monad
 import Control.Monad.Writer
 import Data.List
 
-data Program = Program [Definition] deriving (Show)
+data Boron = Boron [Definition] deriving (Show)
 
 type Name = String
 data Constant = ConstNumber Int | ConstChar [Char] | ConstString String deriving (Show)

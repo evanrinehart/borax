@@ -23,18 +23,6 @@ import Debug.Trace
 type StringMap = Map String
 -- use HashMap String
 
-data Func = Func
-  { funName :: String
-  , funCode :: CodeGraph Expr
-  , funAutoSize :: Int
-  , funExterns :: [String]
-  , funLocals :: StringMap Int
-  , funSize :: Int -- func occupies this amount of memory in words
-  , funVectors :: [Int] -- for i in vecs, *(bp-i) = bp-i
-  , funStrings :: [String]
-  , funStart :: Int
-  } deriving Show
-
 data Machine = Machine
   { machMemory  :: Heap
   , machStackPtr :: Int

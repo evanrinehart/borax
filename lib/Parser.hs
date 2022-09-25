@@ -4,17 +4,29 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Data.Void
 import Data.Char
+import System.Exit
 
 import Syntax
 
 type Parser = Parsec Void String
-type Error = ParseErrorBundle String Void
+--type Error = ParseErrorBundle String Void
 
-parse :: String -> String -> Either Error Program
-parse filename = runParser program filename
+parse :: String -> String -> Either String Boron
+parse filename text = case runParser program filename text of
+  Right p -> return p
+  Left bundle -> Left (errorBundlePretty bundle)
 
-printError :: Error -> IO ()
-printError = putStrLn . errorBundlePretty 
+parseFile :: FilePath -> IO Boron
+parseFile path = do
+  txt <- readFile path
+  case runParser program path txt of
+    Right p  -> return p
+    Left bundle -> do
+      putStrLn (errorBundlePretty bundle)
+      exitFailure
+
+--printError :: Error -> IO ()
+--printError = putStrLn . errorBundlePretty 
 
 binaryOp :: Parser BinaryOp
 binaryOp =
@@ -125,11 +137,11 @@ remspace1 = do
 getLineNo :: Parser Int
 getLineNo = (unPos . sourceLine) <$> getSourcePos
 
-program :: Parser Program
+program :: Parser Boron
 program = do
   remspace
   defs <- many (try definition0 <|> try definition1 <|> definition2)
-  return (Program defs)
+  return (Boron defs)
 
 definition0 :: Parser Definition
 definition0 = do
