@@ -1,4 +1,4 @@
-# Sept2022-A (Bramble)
+# Sept2022-A (borax)
 
 Currently just a parser for the c. 1970 programming language B.
 
