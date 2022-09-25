@@ -135,7 +135,7 @@ evalR (AmpersandExpr ex) = do
   addr <- evalL ex
   return addr
 evalR (FunctionExpr exfun exargs) = do
-  funaddr <- evalR exfun
+  funaddr <- evalL exfun
   argvals <- mapM evalR exargs
   callFunction funaddr argvals
 evalR (VectorExpr ex1 ex2) = do
