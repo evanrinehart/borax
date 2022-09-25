@@ -14,10 +14,10 @@ Namely
 switch or while statement.
 - Automatic vector declarations use square brackets to indicate size.
 - Vectors declared with size N actually hold N+1 words. The bonus 1 word
-of space can be ignored or not. In particular vect[N] is not an error.
+of space can be ignored or not. In particular `vect[N]` is not an error.
 
 However some features eliminated in the later document were retained.
 
-- Octal numeric constants may include 8s and 9s, i.e. 09 = 011.
+- Octal numeric constants may include 8s and 9s, i.e. `09` = `011`.
 
 Code specimen are taken from Users' Reference to B (1972) by Ken Thompson.
