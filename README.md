@@ -6,7 +6,7 @@ B was developed at Bell Labs by Ken Thompson and Dennis M. Ritchie. The
 target application was system software for minicomputers.
 
 Certain features were incorporated from *Bell Laboratories Computing Science
-Technical Report #8: The Programming Language B (1973) (Brian Kernighan, Steve Johnson).*
+Technical Report #8: The Programming Language B* (1973) (Brian Kernighan, Steve Johnson).
 Namely
 
 - Bitwise complement operator `~`
@@ -20,4 +20,4 @@ However some features eliminated in the later document were retained.
 
 - Octal numeric constants may include 8s and 9s, i.e. `09` = `011`.
 
-Code specimen are taken from Users' Reference to B (1972) by Ken Thompson.
+Code specimen are taken from *Users' Reference to B (1972)* by Ken Thompson.
