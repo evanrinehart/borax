@@ -21,3 +21,35 @@ However some features eliminated in the later document were retained.
 - Octal numeric constants may include 8s and 9s, i.e. `09` = `011`.
 
 Code specimen are taken from *Users' Reference to B* (1972) by Ken Thompson.
+
+## Example
+
+```
+main() {
+  extrn printf, getchar, time, exit;
+  auto timev[2];
+
+  printf("What is my task...*n");
+  printf("o - print Hello World*n");
+  printf("t - print system time*n");
+  printf("x - exit immediately*n");
+  printf("> ");
+
+  switch getchar() {
+    case 'o':
+      printf("Hello World!*n");
+      goto done;
+    case 't':
+      time(timev);
+      printf("The system time is (%d,%d)*n", timev[0], timev[1]);
+      goto done;
+    case 'x':
+      printf("As you wish--");
+      exit();
+      goto done;
+  }
+
+  done: printf("End of Program*n");
+}
+```
+
