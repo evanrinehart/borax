@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Eval where
 
 import Control.Monad
@@ -18,10 +19,11 @@ import Compile
 import Heap
 import PackedString
 import Link
+import System
 
 import Debug.Trace
 
-data Machine = Machine
+data Machine m = Machine
   { machMemory  :: Heap
   , machStackPtr :: Int
   , machBasePtr :: Int -- base + 0 is argument 1
@@ -29,9 +31,10 @@ data Machine = Machine
   , machFuncs :: IntMap Func      -- addr => func
   , machNames :: Map String Int --   name => addr
   , machStrings :: Map String Int -- string => addr
-  } deriving Show
+  , machService :: ServiceCalls m
+  }
 
-type Eval m a = ExceptT String (StateT Machine m) a
+type Eval m a = ExceptT String (StateT (Machine m) m) a
 
 blankMachine = Machine
   { machMemory = Heap.empty
@@ -40,25 +43,58 @@ blankMachine = Machine
   , machFrames = [M.empty]
   , machFuncs = IM.empty
   , machNames = M.empty
-  , machStrings = M.empty }
+  , machStrings = M.empty
+  , machService = dummySystem }
 
-fromBorax :: Borax -> Machine
-fromBorax bx = Machine
-  { machMemory   = bxHeap bx
+fromBorax :: ServiceCalls m -> Borax -> Machine m
+fromBorax srv bx = Machine
+  { machMemory   = specialObjects `Heap.merge` bxHeap bx
   , machStackPtr = 9999
   , machBasePtr  = 9999
   , machFrames   = [M.empty]
   , machFuncs    = bxFuncs bx
-  , machNames    = bxNames bx
-  , machStrings =  bxStrings bx }
+  , machNames    = specialObjectLocs `M.union` bxNames bx
+  , machStrings  = bxStrings bx
+  , machService  = srv }
 
-bootUp :: Machine -> IO (Either String Int)
+bootUp :: Machine IO -> IO (Either String Int)
 bootUp mch = flip evalStateT mch . runExceptT $ do
   mainAddr <- decodeName "main"
   r <- callFunction mainAddr []
   --mem <- gets machMemory
   --liftIO (print mem)
   return r
+
+
+-- list of special __IO globals
+-- __IO.time.query   <!>
+-- __IO.time.cachev  [2]
+-- __IO.output       <!>
+-- __IO.input.query  <!>
+-- __IO.input.cache  [1]
+-- __IO.exit         <!>
+specialObjects :: Heap
+specialObjects = Heap.load
+  [(50,  2) -- __IO.output
+  ,(51,  3) -- __IO.input.query
+  ,(52,  0) -- __IO.input.cache
+  ,(53,  7) -- __IO.time.query
+  ,(54, 55) -- __IO.time.cache
+  ,(55,  0)
+  ,(56,  0)
+  ,(57, 13) -- __IO.exit
+  ]
+
+specialObjectLocs :: Map String Int
+specialObjectLocs = M.fromList
+  [("__IO.output",      50)
+  ,("__IO.input.query", 51)
+  ,("__IO.input.cache", 52)
+  ,("__IO.time.query",  53)
+  ,("__IO.time.cachev", 54)
+  ,("__IO.exit",        57)
+  ]
+
 
 
 
@@ -269,7 +305,30 @@ popFrame = do
 heapPeek :: Monad m => Int -> Eval m Int
 heapPeek addr = gets ((`Heap.peek` addr) . machMemory)
 
-heapPoke :: Monad m => Int -> Int -> Eval m ()
+heapPoke :: forall m . Monad m => Int -> Int -> Eval m ()
+heapPoke 2 val = do
+  -- output val, no other effect
+  action <- gets (service_putchar . machService)
+  _ <- lift (lift (action val))
+  return ()
+heapPoke 3 val = do
+  -- request input, place in __IO.input.cache
+  action <- gets (service_getchar . machService)
+  c <- lift (lift action)
+  dst <- decodeName "__IO.input.cache"
+  heapPoke dst c
+heapPoke 7 val = do
+  -- request latest time, place in __IO.time.cachev[0] and [1]
+  action <- gets (service_time . machService)
+  (t0,t1) <- lift (lift action)
+  dst <- decodeName "__IO.time.cachev"
+  heapPoke (dst+1) t0
+  heapPoke (dst+2) t1
+heapPoke 13 val = do
+  -- trigger program termination, this is intended to halt the VM
+  action <- gets (service_exit . machService)
+  _ <- lift (lift action)
+  return ()
 heapPoke addr val = modify (\mch -> mch { machMemory = Heap.poke addr val (machMemory mch) })
 
 arith2 :: BinaryOp -> Int -> Int -> Int

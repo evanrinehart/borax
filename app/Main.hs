@@ -5,12 +5,16 @@ import System.IO
 import System.Environment
 import System.Exit
 import Control.Monad
+import Data.Char
+import Data.Time.Clock.POSIX
+import Data.Functor
 
 import Syntax
 import Parser
 import Compile
 import Link
 import Eval
+import System
 
 import Text.Pretty.Simple
 
@@ -27,7 +31,7 @@ main = do
     Left msg  -> putStrLn msg >> exitFailure
     Right borax -> do
       --pPrint borax
-      let machine = fromBorax borax
+      let machine = fromBorax actualServices borax
       result <- bootUp machine
       case result of
         Left msg -> putStrLn ("failure: " ++ msg)
@@ -41,3 +45,28 @@ getPathsFromCmdLine = do
       putStrLn "usage: list the source files to compile and run"
       exitSuccess
     paths -> return paths
+
+
+actualServices :: ServiceCalls IO
+actualServices = dummySystem
+  { service_putchar = ($> 0) . putChar . chr
+  , service_getchar = inputService
+  , service_time    = timeService
+  , service_exit    = exitSuccess
+  }
+
+-- get the current system time and return it in two words
+timeService :: IO (Int,Int)
+timeService = do
+  t <- getPOSIXTime
+  let ticks = floor (t * 60) :: Integer
+  let (msw,lsw) = ticks `divMod` (2 ^ 36)
+  return (fromIntegral msw, fromIntegral lsw)
+
+-- get the next character from standard input. Return '*e' if end of file.
+inputService :: IO Int
+inputService = do
+  eof <- isEOF
+  if eof
+    then return 4
+    else ord <$> getChar
