@@ -36,6 +36,7 @@ data Machine m = Machine
 
 type Eval m a = ExceptT String (StateT (Machine m) m) a
 
+blankMachine :: Applicative m => Machine m
 blankMachine = Machine
   { machMemory = Heap.empty
   , machStackPtr = 9999
@@ -97,19 +98,6 @@ specialObjectLocs = M.fromList
 
 
 
-
--- to run the code we need a interpreter loop that can
--- access and modify memory
--- follow a code graph
--- make a call to another function and get the result back
--- yield a value to whoever called you
-
--- names access various things:
---   local variable (located in the stack frame)
---   arguments      (located in the stack frame)
---   external variables (located in data space)
---   labels         (no storage, but they have an rvalue)
---   other functions (located in code space, has an rvalue so we can pass funcrefs around)
 
 evalR :: Monad m => Expr -> Eval m Int
 evalR (ParenExpr ex) = evalR ex
@@ -360,21 +348,3 @@ rawShiftR :: Int -> Int -> Int
 rawShiftR i s = fromIntegral (let w = fromIntegral i :: Word in w `shiftR` s)
 
 
-runShot :: Func -> IO ()
-runShot func = do
-  let magicLocation = 10
-  let mch = blankMachine
-              { machFuncs = IM.singleton magicLocation func
-              , machNames = M.singleton "main" magicLocation }
-  result <- bootUp mch
-  case result of
-    Left msg -> putStrLn msg
-    Right i  -> do
-      putStrLn ("exited with value " ++ show i)
-
-
--- pack and place strings in the heap, return the directory to find them.
--- strategy, the stack begins at 9999 and grows down. We will begin placing
--- constant data at memory location 100. Anything already there is clobbered.
---compileStrings :: [String] -> Machine (Map String Int)
---compileStrings strs = 
