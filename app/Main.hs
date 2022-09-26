@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 module Main where
 
 import System.IO
@@ -20,17 +19,14 @@ import Text.Pretty.Simple
 
 main = do
   paths <- getPathsFromCmdLine
-  --pPrint paths
   borates <- forM paths $ \path -> do
     boron <- parseFile path
     case compile boron of
       Left msg  -> putStrLn msg >> exitFailure
       Right bor -> return bor
-  --pPrint borates
   case link borates of
     Left msg  -> putStrLn msg >> exitFailure
     Right borax -> do
-      --pPrint borax
       let machine = fromBorax actualServices borax
       result <- bootUp machine
       case result of
@@ -45,7 +41,6 @@ getPathsFromCmdLine = do
       putStrLn "usage: list the source files to compile and run"
       exitSuccess
     paths -> return paths
-
 
 actualServices :: ServiceCalls IO
 actualServices = dummySystem
