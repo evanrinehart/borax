@@ -18,6 +18,9 @@ import System
 import Text.Pretty.Simple
 
 main = do
+
+  hSetBuffering stdout NoBuffering
+
   paths <- getPathsFromCmdLine
   borates <- forM paths $ \path -> do
     boron <- parseFile path
