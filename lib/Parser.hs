@@ -413,24 +413,17 @@ postfixOp =
   PostIncDec PlusPlus <$ (string "++" >> remspace) <|>
   PostIncDec MinusMinus <$ (string "--" >> remspace)
 
-unaryExprPre :: Parser Expr
-unaryExprPre = do
-  hmm <- eitherP prefixOp primaryExpr
-  case hmm of 
-    Left wrap -> do
-      body <- unaryExprPre
-      return (wrap body)
-    Right base -> return base
-
-unaryExprPost :: Expr -> Parser Expr
-unaryExprPost base = do
-  wrapMaybe <- optional postfixOp
-  case wrapMaybe of
-    Nothing -> return base
-    Just wrap -> unaryExprPost (wrap base)
+primaryWithPostOp :: Parser Expr
+primaryWithPostOp = do
+  body <- primaryExpr
+  wrappers <- many postfixOp
+  return (foldl (\e f -> f e) body wrappers)
 
 unaryExpr :: Parser Expr
-unaryExpr = unaryExprPre >>= unaryExprPost
+unaryExpr = do
+  wrappers <- reverse <$> many prefixOp
+  body <- primaryWithPostOp
+  return (foldl (\e f -> f e) body wrappers)
 
 multOp :: Parser (Expr -> Expr -> Expr)
 multOp =

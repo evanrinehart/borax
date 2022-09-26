@@ -336,7 +336,7 @@ arith2 binop val1 val2 = case binop of
   BitOr -> val1 .|. val2
   BitAnd -> val1 .&. val2
   Equals -> if val1 == val2 then 1 else 0
-  NotEquals -> if val1 /= val2 then 1 else 1
+  NotEquals -> if val1 /= val2 then 1 else 0
   LessThan -> if val1 < val2 then 1 else 0
   LessThanEquals -> if val1 <= val2 then 1 else 0
   GreaterThan -> if val1 > val2 then 1 else 0
