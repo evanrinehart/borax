@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 module Eval where
 
 import Control.Monad
@@ -293,7 +292,7 @@ popFrame = do
 heapPeek :: Monad m => Int -> Eval m Int
 heapPeek addr = gets ((`Heap.peek` addr) . machMemory)
 
-heapPoke :: forall m . Monad m => Int -> Int -> Eval m ()
+heapPoke :: Monad m => Int -> Int -> Eval m ()
 heapPoke 2 val = do
   -- output val, no other effect
   action <- gets (service_putchar . machService)
