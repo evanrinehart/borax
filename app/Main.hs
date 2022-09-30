@@ -68,3 +68,15 @@ inputService = do
   if eof
     then return 4
     else ord <$> getChar
+
+-- divide 256*a + b by 60 to get 256*c + d + e/60
+-- where b < 256, d < 256, e < 60
+over60 :: Int -> Int -> (Int, Int, Int)
+over60 a b =
+  let (q0,r0) = a `divMod` 60
+      (q1,r1) = (16 * r0) `divMod` 60
+      (q2,r2) = b `divMod` 60
+      c = q0
+      d = r0 * 4 + q1 + q2
+      e = r1 + r2
+  in (c,d,e)

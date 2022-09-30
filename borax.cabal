@@ -11,7 +11,9 @@ executable borax
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules: PackedString, Heap, Syntax, Parser, Compile, Link, Eval, System
+    other-modules:
+      PackedString, Heap, Syntax, Parser, Compile, Link,
+      Eval, System, Asm
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
