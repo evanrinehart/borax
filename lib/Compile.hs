@@ -5,8 +5,10 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.Writer
 import Data.Maybe
+import Data.Fix
 
 import Syntax
+import Expr
 import PackedString
 
 import Data.List
@@ -140,8 +142,8 @@ compileStatement stmt next = go stmt next where
     let Just new = mnew
     addNode line (Switch ex new next)
     
-  go (GotoStatement line ex) next = do
-    let NameExpr name = ex
+  go (GotoStatement line (Fix ex)) next = do
+    let ExName name = ex
     finalLabelMap <- ask
     let target = finalLabelMap M.! name
     addNode line (Goto target)
@@ -346,9 +348,9 @@ makeFunc fdef@(FunctionDef _ funcname params body) =
 
 
 ivalToLinkMe :: IVal -> LinkMe
-ivalToLinkMe (IVConst (ConstNumber n)) = LMJust n
-ivalToLinkMe (IVConst (ConstChar cs)) = LMJust (packChars cs)
-ivalToLinkMe (IVConst (ConstString str)) = LMString str
+ivalToLinkMe (IVConst (ConstI n)) = LMJust n
+ivalToLinkMe (IVConst (ConstC cs)) = LMJust (packChars cs)
+ivalToLinkMe (IVConst (ConstS str)) = LMString str
 ivalToLinkMe (IVName name) = LMVariable name
         
 
@@ -395,7 +397,12 @@ stringsInCode gr = foldMap f gr where
   f (Node _ (Return ex))     = stringsInExpr ex
   f _ = []
 
+stringsInExpr :: Expr -> [String]
+stringsInExpr = foldMapExpr f where
+  f (ExConst (ConstS str)) = [str]
+  f _ = []
 
+{-
 stringsInExpr :: Expr -> [String]
 stringsInExpr = execWriter . go where
   go :: Expr -> Writer [String] ()
@@ -424,6 +431,7 @@ stringsInExpr = execWriter . go where
   go (VectorExpr e1 e2) = do
     go e1
     go e2
+-}
 
 
 borateStrings :: [Borate LinkMe] -> [String]

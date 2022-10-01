@@ -4,10 +4,12 @@ import Control.Monad
 import Control.Monad.Writer
 import Data.List
 
+import Expr
+
 data Boron = Boron [Definition] deriving (Show)
 
 type Name = String
-data Constant = ConstNumber Int | ConstChar [Char] | ConstString String deriving (Show)
+--data Constant = ConstNumber Int | ConstChar [Char] | ConstString String deriving (Show)
 data IVal = IVConst Constant | IVName Name deriving (Show)
 data Definition =
   DefV1 Int Name (Maybe IVal) |
@@ -34,24 +36,28 @@ data Statement =
   NullStatement Int
     deriving (Show)
 
-data Expr =
+
+{-
+data OldExpr =
   -- RValue
-  ParenExpr Expr |
+  ParenExpr OldExpr |
   ConstExpr Constant |
-  AssignExpr (Maybe BinaryOp) Expr Expr |
-  PreIncDec IncDec Expr |
-  PostIncDec IncDec Expr |
-  AmpersandExpr Expr |
-  UnaryExpr UnaryOp Expr |
-  BinaryExpr BinaryOp Expr Expr |
-  TernaryExpr Expr Expr Expr |
-  FunctionExpr Expr [Expr] |
+  AssignExpr (Maybe BinaryOp) OldExpr OldExpr |
+  PreIncDec IncDec OldExpr |
+  PostIncDec IncDec OldExpr |
+  AmpersandExpr OldExpr |
+  UnaryExpr UnaryOp OldExpr |
+  BinaryExpr BinaryOp OldExpr OldExpr |
+  TernaryExpr OldExpr OldExpr OldExpr |
+  FunctionExpr OldExpr [OldExpr] |
   -- LValue
   NameExpr Name |
-  StarExpr Expr |
-  VectorExpr Expr Expr 
+  StarExpr OldExpr |
+  VectorExpr OldExpr OldExpr 
     deriving (Show)
+-}
 
+{-
 data IncDec = PlusPlus | MinusMinus deriving (Show)
 data UnaryOp = Negative | LogicNot | BitComplement deriving (Show)
 data BinaryOp =
@@ -71,43 +77,10 @@ data BinaryOp =
   Times |
   Division
     deriving (Show)
+-}
 
 
-showConstant :: Constant -> String
-showConstant (ConstNumber n) = show n
-showConstant (ConstChar cs) = showWideChar cs
-showConstant (ConstString str) = show str
-
-encodeC :: Char -> String
-encodeC '\'' = "*'"
-encodeC '"' = "*\""
-encodeC '\EOT' = "*e"
-encodeC '\t' = "*t"
-encodeC '\n' = "*n"
-encodeC '\0' = "*0"
-encodeC '*' = "**"
-encodeC c = [c]
-
-showWideChar :: String -> String
-showWideChar cs = "'" ++ concatMap encodeC cs ++ "'"
-
-showBinaryOp o = case o of
-  BitOr -> "|"
-  BitAnd -> "&"
-  Equals -> "=="
-  NotEquals -> "!="
-  LessThan -> "<"
-  LessThanEquals -> "<="
-  GreaterThan -> ">"
-  GreaterThanEquals -> ">="
-  ShiftL -> "<<"
-  ShiftR -> ">>"
-  Plus -> "+"
-  Minus -> "-"
-  Modulo -> "%"
-  Times -> "*"
-  Division -> "/"
-
+{-
 showExpr :: Expr -> String
 showExpr = execWriter . go where
   go :: Expr -> Writer String ()
@@ -164,3 +137,4 @@ showExpr = execWriter . go where
     tell "["
     go ex2
     tell "]"
+-}

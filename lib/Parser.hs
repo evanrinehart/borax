@@ -5,7 +5,9 @@ import Text.Megaparsec.Char
 import Data.Void
 import Data.Char
 import System.Exit
+import Data.Fix
 
+import Expr
 import Syntax
 
 type Parser = Parsec Void String
@@ -70,9 +72,9 @@ validName = do
 
 constant :: Parser Constant
 constant =
-  ConstNumber <$> numericConstant <|>
-  ConstString <$> stringConstant <|>
-  ConstChar <$> charConstant
+  ConstI <$> numericConstant <|>
+  ConstS <$> stringConstant <|>
+  ConstC <$> charConstant
 
 numericConstant :: Parser Int
 numericConstant = do
@@ -357,12 +359,12 @@ nameExpr :: Parser Expr
 nameExpr = do
   n <- validName
   remspace
-  return (NameExpr n)
+  return (Fix (ExName n))
 
 constExpr :: Parser Expr
 constExpr = do
   c <- constant
-  return (ConstExpr c)
+  return (Fix (ExConst c))
 
 parenExpr :: Parser Expr
 parenExpr = do
@@ -371,7 +373,7 @@ parenExpr = do
   body <- anyExpr
   char ')'
   remspace
-  return (ParenExpr body)
+  return body
 
 primaryExpr :: Parser Expr
 primaryExpr = do
@@ -386,7 +388,7 @@ primaryEtc1 = do
   body <- anyExpr
   char ']'
   remspace
-  return (\h -> VectorExpr h body)
+  return (\h -> Fix (ExVector h body))
 
 primaryEtc2 :: Parser (Expr -> Expr)
 primaryEtc2 = do
@@ -395,23 +397,31 @@ primaryEtc2 = do
   args <- anyExpr `sepBy` (char ',' >> remspace)
   char ')'
   remspace
-  return (\h -> FunctionExpr h args)
+  return (\h -> Fix (ExFunc h args))
   
 
 prefixOp :: Parser (Expr -> Expr)
 prefixOp =
-  UnaryExpr LogicNot <$ (char '!' >> remspace) <|>
-  UnaryExpr Negative <$ (char '-' >> remspace) <|>
-  UnaryExpr BitComplement <$ (char '~' >> remspace) <|>
-  StarExpr <$ (char '*' >> remspace) <|>
-  AmpersandExpr <$ (char '&' >> remspace) <|>
-  PreIncDec PlusPlus <$ (string "++" >> remspace) <|>
-  PreIncDec MinusMinus <$ (string "--" >> remspace)
+  wrapunary LogicNot <$ (char '!' >> remspace) <|>
+  wrapunary Negative <$ (char '-' >> remspace) <|>
+  wrapunary BitComplement <$ (char '~' >> remspace) <|>
+  starE <$ (char '*' >> remspace) <|>
+  ampE  <$ (char '&' >> remspace) <|>
+  plusPlusE   <$ (string "++" >> remspace) <|>
+  minusMinusE <$ (string "--" >> remspace)
 
 postfixOp :: Parser (Expr -> Expr)
 postfixOp =
-  PostIncDec PlusPlus <$ (string "++" >> remspace) <|>
-  PostIncDec MinusMinus <$ (string "--" >> remspace)
+  ePlusPlus   <$ (string "++" >> remspace) <|>
+  eMinusMinus <$ (string "--" >> remspace)
+
+ePlusPlus e = Fix (ExPostInc e)
+eMinusMinus e = Fix (ExPostDec e)
+plusPlusE e = Fix (ExPreInc e)
+minusMinusE e = Fix (ExPreDec e)
+ampE e = Fix (ExAmp e)
+starE e = Fix (ExStar e)
+wrapunary op e = Fix (ExUnary op e)
 
 primaryWithPostOp :: Parser Expr
 primaryWithPostOp = do
@@ -427,25 +437,25 @@ unaryExpr = do
 
 multOp :: Parser (Expr -> Expr -> Expr)
 multOp =
-  BinaryExpr Modulo   <$ (char '%' >> remspace) <|>
-  BinaryExpr Times    <$ (char '*' >> remspace) <|>
-  BinaryExpr Division <$ (char '/' >> remspace)
+  wrapbin Modulo   <$ (char '%' >> remspace) <|>
+  wrapbin Times    <$ (char '*' >> remspace) <|>
+  wrapbin Division <$ (char '/' >> remspace)
 
 multChain :: Parser Expr
 multChain = chainl1 unaryExpr multOp
 
 additiveOp :: Parser (Expr -> Expr -> Expr)
 additiveOp = 
-  BinaryExpr Plus  <$ (char '+' >> remspace) <|>
-  BinaryExpr Minus <$ (char '-' >> remspace)
+  wrapbin Plus  <$ (char '+' >> remspace) <|>
+  wrapbin Minus <$ (char '-' >> remspace)
 
 additiveChain :: Parser Expr
 additiveChain = chainl1 multChain additiveOp
 
 shiftOp :: Parser (Expr -> Expr -> Expr)
 shiftOp =
-  BinaryExpr ShiftL <$ (string "<<" >> remspace) <|>
-  BinaryExpr ShiftR <$ (string ">>" >> remspace)
+  wrapbin ShiftL <$ (string "<<" >> remspace) <|>
+  wrapbin ShiftR <$ (string ">>" >> remspace)
 
 shiftChain :: Parser Expr
 shiftChain = chainl1 additiveChain shiftOp
@@ -453,33 +463,39 @@ shiftChain = chainl1 additiveChain shiftOp
 relationalChain :: Parser Expr
 relationalChain = chainl1 shiftChain op where
   op =
-    BinaryExpr LessThan <$ (char '<' >> remspace) <|>
-    BinaryExpr LessThanEquals <$ (string "<=" >> remspace) <|>
-    BinaryExpr GreaterThan <$ (char '>' >> remspace) <|>
-    BinaryExpr GreaterThanEquals <$ (string ">=" >> remspace)
+    wrapbin LessThan <$ (char '<' >> remspace) <|>
+    wrapbin LessThanEquals <$ (string "<=" >> remspace) <|>
+    wrapbin GreaterThan <$ (char '>' >> remspace) <|>
+    wrapbin GreaterThanEquals <$ (string ">=" >> remspace)
 
 equalityChain :: Parser Expr
 equalityChain = chainl1 relationalChain op where
   op =
-    BinaryExpr Equals <$ (string "==" >> remspace) <|>
-    BinaryExpr NotEquals <$ (string "!=" >> remspace)
+    wrapbin Equals <$ (string "==" >> remspace) <|>
+    wrapbin NotEquals <$ (string "!=" >> remspace)
 
 
 bitOrChain :: Parser Expr
 bitOrChain = chainl1 bitAndChain op where
-  op = BinaryExpr BitOr <$ (char '|' >> remspace)
+  op = wrapbin BitOr <$ (char '|' >> remspace)
 
 bitAndChain :: Parser Expr
 bitAndChain = chainl1 equalityChain op where
-  op = BinaryExpr BitAnd <$ (char '&' >> remspace)
+  op = wrapbin BitAnd <$ (char '&' >> remspace)
+
+wrapbin :: BinaryOp -> Expr -> Expr -> Expr
+wrapbin op e1 e2 = Fix (ExBinary op e1 e2)
+
 
 -- parse an assignment operator, =, =+, etc
 assignmentOp :: Parser (Expr -> Expr -> Expr)
 assignmentOp = do
   char '='
-  op <- optional binaryOp
+  mop <- optional binaryOp
   remspace
-  return (AssignExpr op)
+  case mop of
+    Nothing -> return (\e1 e2 -> Fix (ExAssign e1 e2))
+    Just op -> return (\e1 e2 -> Fix (ExAssignOp op e1 e2))
 
 assignChain :: Parser Expr
 assignChain = chainr1 ternaries assignmentOp
@@ -496,7 +512,7 @@ ternaries = do
       char ':'
       remspace
       c <- ternaries
-      return (TernaryExpr a b c)
+      return (Fix (ExTernary a b c))
 
 chainl1 :: Parser term -> Parser (term -> term -> term) -> Parser term
 chainl1 term op = do

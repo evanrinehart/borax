@@ -10,6 +10,7 @@ import Data.IntMap as IM hiding (map, lookup)
 import qualified Data.IntMap as IM 
 import Data.Map as M hiding (map, lookup, drop)
 import qualified Data.Map as M 
+import Data.Fix
 
 import Data.Bits
 
@@ -19,6 +20,7 @@ import Heap
 import PackedString
 import Link
 import System
+import Expr
 
 import Debug.Trace
 
@@ -98,84 +100,92 @@ specialObjectLocs = M.fromList
 
 
 
-evalR :: Monad m => Expr -> Eval m Int
-evalR (ParenExpr ex) = evalR ex
-evalR (AssignExpr Nothing e1 e2) = do
+evalR :: Monad m => ExprOf Expr -> Eval m Int
+evalR (ExAssign (Fix e1) (Fix e2)) = do
   addr <- evalL e1
   val  <- evalR e2
   storeAt addr val -- could cause i/o now
   return val
-evalR (AssignExpr (Just binop) e1 e2) = do
+evalR (ExAssignOp binop (Fix e1) (Fix e2)) = do
   addr <- evalL e1
   val1 <- loadFrom addr -- I/O?
   val2 <- evalR e2
   let val3 = arith2 binop val1 val2
   storeAt addr val3 -- I/O?
   return val3
-evalR (PreIncDec incdec ex) = do
+evalR (ExPreInc (Fix ex)) = do
   addr <- evalL ex
   val  <- loadFrom addr -- could cause i/o now
-  let val' = case incdec of PlusPlus -> val+1; MinusMinus -> val-1
+  let val' = val + 1
   storeAt addr val' -- could cause i/o now
   return val'
-evalR (PostIncDec incdec ex) = do
+evalR (ExPreDec (Fix ex)) = do
   addr <- evalL ex
   val  <- loadFrom addr -- could cause i/o now
-  let val' = case incdec of PlusPlus -> val+1; MinusMinus -> val-1
+  let val' = val - 1
+  storeAt addr val' -- could cause i/o now
+  return val'
+evalR (ExPostInc (Fix ex)) = do
+  addr <- evalL ex
+  val  <- loadFrom addr -- could cause i/o now
+  let val' = val + 1
   storeAt addr val' -- could cause i/o now
   return val
-evalR (ConstExpr k) = case k of
-  ConstNumber n -> return (fromIntegral n)
-  ConstChar cs  -> return (packChars cs)
-  ConstString str -> do
-    addr <- findString str
-    return addr
-evalR (NameExpr name) = do
+evalR (ExPostDec (Fix ex)) = do
+  addr <- evalL ex
+  val  <- loadFrom addr -- could cause i/o now
+  let val' = val - 1
+  storeAt addr val' -- could cause i/o now
+  return val
+
+evalR (ExConst k) = do
+  f <- getStringFinder
+  return (evalConstant f k)
+evalR (ExName name) = do
   addr <- decodeName name -- local? extrn? function? label?
   loadFrom addr -- could cause i/o now
-evalR (UnaryExpr LogicNot ex) = do
+evalR (ExUnary LogicNot (Fix ex)) = do
   val <- evalR ex
   return (if val==0 then 1 else 0)
-evalR (UnaryExpr Negative ex) = do
+evalR (ExUnary Negative (Fix ex)) = do
   val <- evalR ex
   return (negate val)
-evalR (UnaryExpr BitComplement ex) = do
+evalR (ExUnary BitComplement (Fix ex)) = do
   val <- evalR ex
   return (complement val)
-evalR (BinaryExpr binop ex1 ex2) = do
+evalR (ExBinary binop (Fix ex1) (Fix ex2)) = do
   val1 <- evalR ex1
   val2 <- evalR ex2
   return (arith2 binop val1 val2)
-evalR (TernaryExpr ex1 ex2 ex3) = do
+evalR (ExTernary (Fix ex1) (Fix ex2) (Fix ex3)) = do
   val <- evalR ex1
   if val==0
     then evalR ex3
     else evalR ex2
-evalR (StarExpr ex) = do
+evalR (ExStar (Fix ex)) = do
   addr <- evalR ex
   loadFrom addr -- could cause i/o now
-evalR (AmpersandExpr ex) = do
+evalR (ExAmp (Fix ex)) = do
   addr <- evalL ex
   return addr
-evalR (FunctionExpr exfun exargs) = do
+evalR (ExFunc (Fix exfun) exargs) = do
   funaddr <- evalL exfun
-  argvals <- mapM evalR exargs
+  argvals <- mapM (evalR . unFix) exargs
   callFunction funaddr argvals
-evalR (VectorExpr ex1 ex2) = do
+evalR (ExVector (Fix ex1) (Fix ex2)) = do
   base   <- evalR ex1
   offset <- evalR ex2
   loadFrom (base + offset)
 
 
 -- evaluate expression in lvalue context, i.e. compute the address of it
-evalL :: Monad m => Expr -> Eval m Int
-evalL (NameExpr name)    = decodeName name
-evalL (StarExpr ex)      = evalR ex -- section 4.2.2
-evalL (VectorExpr e1 e2) = do
+evalL :: Monad m => ExprOf Expr -> Eval m Int
+evalL (ExName name)    = decodeName name
+evalL (ExStar (Fix ex))      = evalR ex -- section 4.2.2
+evalL (ExVector (Fix e1) (Fix e2)) = do
   base   <- evalR e1
   offset <- evalR e2
   return (base + offset)
-evalL (ParenExpr ex)    = evalL ex
 evalL _ = panic "illogical"
 
 callFunction :: Monad m => Int -> [Int] -> Eval m Int
@@ -183,7 +193,7 @@ callFunction funaddr argvals = do
   fun <- findFunction funaddr
   mapM_ pushWord (reverse argvals)
   pushFrame fun argvals
-  let gr = funCode fun
+  let gr    = funCode fun
   let start = funStart fun
   r <- runStatement gr start
   popFrame
@@ -195,15 +205,15 @@ runStatement gr i =
   let Node _ opcode = gr IM.! i in
   case opcode of
     Goto next       -> runStatement gr next
-    IfGoto ex n1 n2 -> do
+    IfGoto (Fix ex) n1 n2 -> do
       val <- evalR ex
       runStatement gr (if val==0 then n2 else n1)
-    Return ex       -> evalR ex
-    Eval ex next    -> do
+    Return (Fix ex)       -> evalR ex
+    Eval (Fix ex) next    -> do
       _ <- evalR ex
       runStatement gr next
     Null            -> return 0
-    Switch ex table next -> do
+    Switch (Fix ex) table next -> do
       val <- evalR ex
       switchLookup table val >>= \case
         Nothing -> runStatement gr next
@@ -213,8 +223,8 @@ runStatement gr i =
 switchLookup :: Monad m => [(Constant,Int)] -> Int -> Eval m (Maybe Int)
 switchLookup [] _ = return Nothing
 switchLookup ((k,n):more) y = do
-  x <- evalR (ConstExpr k)
-  if x==y
+  x <- evalR (ExConst k)
+  if x == y
     then return (Just n)
     else switchLookup more y
 
@@ -231,6 +241,15 @@ storeAt addr val = do
   -- FIXME this needs to check for mmio before accessing heap
   heapPoke addr val
   
+evalConstant :: (String -> Int) -> Constant -> Int
+evalConstant strings (ConstI n)   = fromIntegral n
+evalConstant strings (ConstC cs)  = packChars cs
+evalConstant strings (ConstS str) = strings str
+
+getStringFinder :: Monad m => Eval m (String -> Int)
+getStringFinder = do
+  map <- gets machStrings
+  return (map M.!)
 
 findString :: Monad m => String -> Eval m Int
 findString str = gets ((M.! str) . machStrings)
