@@ -63,7 +63,7 @@ instance Show1 ExprOf where
         sp 11 e1 . showChar ' ' .
         sl es
     f (ExTernary e1 e2 e3) = showParen (lvl > 10) $
-        showString "ExAssignOp" . showChar ' ' .
+        showString "ExTernary" . showChar ' ' .
         sp 11 e1 . showChar ' ' .
         sp 11 e2 . showChar ' ' .
         sp 11 e3 . showChar ' '
