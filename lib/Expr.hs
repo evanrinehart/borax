@@ -37,30 +37,42 @@ data ExprOf a =
   ExVector a a
     deriving (Functor, Foldable, Show)
 
+
 instance Show1 ExprOf where
   liftShowsPrec sp sl lvl ex = f ex where
-    f (ExConst k) = showsUnaryWith (\_ _ _ -> "?") "ExConst" lvl k
+    f (ExConst k) = showsUnaryWith showsPrec "ExConst" lvl k
     f (ExAmp e)   = showsUnaryWith sp "ExAmp" lvl e
-    f _ = \_ -> "Show1 not implemented"
-{-
-    ExUnary UnaryOp a |
-    ExBinary BinaryOp a a |
-    ExAssign a a |
-    ExPreInc a |
-    ExPreDec a |
-    ExPostInc a |
-    ExPostDec a |
-    ExFunc a [a] |
-    ExTernary a a a |
-    -- LValue
-    ExName String |
-    ExStar a |
-    ExVector a a
--}
-    
+    f (ExUnary unop e) = showsBinaryWith showsPrec sp "ExUnary" lvl unop e
+    f (ExBinary binop e1 e2) = showParen (lvl > 10) $
+        showString "ExBinary" . showChar ' ' .
+        showsPrec 11 binop . showChar ' ' .
+        sp 11 e1 . showChar ' ' .
+        sp 11 e2
+    f (ExAssign e1 e2) = showsBinaryWith sp sp "ExAssign" lvl e1 e2
+    f (ExAssignOp binop e1 e2) = showParen (lvl > 10) $
+        showString "ExAssignOp" . showChar ' ' .
+        showsPrec 11 binop . showChar ' ' .
+        sp 11 e1 . showChar ' ' .
+        sp 11 e2
+    f (ExPreInc e)  = showsUnaryWith sp "ExPreInc" lvl e
+    f (ExPreDec e)  = showsUnaryWith sp "ExPreDec" lvl e
+    f (ExPostInc e) = showsUnaryWith sp "ExPostInc" lvl e
+    f (ExPostDec e) = showsUnaryWith sp "ExPostDec" lvl e
+    f (ExFunc e1 es) = showParen (lvl > 10) $
+        showString "ExFunc" . showChar ' ' .
+        sp 11 e1 . showChar ' ' .
+        sl es
+    f (ExTernary e1 e2 e3) = showParen (lvl > 10) $
+        showString "ExAssignOp" . showChar ' ' .
+        sp 11 e1 . showChar ' ' .
+        sp 11 e2 . showChar ' ' .
+        sp 11 e3 . showChar ' '
+  -- LValue
+    f (ExName str) = showsUnaryWith (\_ -> showString . show) "ExName" lvl str
+    f (ExStar e)   = showsUnaryWith sp "ExStar" lvl e
+    f (ExVector e1 e2) = showsBinaryWith sp sp "ExVector" lvl e1 e2
 
 type Expr = Fix ExprOf
--- Expr is equivalent to ExprOf Expr
 
 data UnaryOp =
   Negative |
