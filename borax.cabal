@@ -12,8 +12,8 @@ executable borax
 
     -- Modules included in this executable, other than Main.
     other-modules:
-      PackedString, Heap, Syntax, Parser, Compile, Link,
-      Eval, System, Asm, Expr
+      PackedString, Heap, Syntax, Parser, Interpret, Prepare, Link,
+      System, Asm, Expr, Compiler
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

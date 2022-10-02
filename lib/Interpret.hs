@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module Eval where
+module Interpret where
 
 import Control.Monad
 import Control.Monad.State
@@ -15,7 +15,7 @@ import Data.Fix
 import Data.Bits
 
 import Syntax
-import Compile
+import Prepare
 import Heap
 import PackedString
 import Link

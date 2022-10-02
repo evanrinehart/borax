@@ -1,4 +1,4 @@
-module Compile where
+module Prepare where
 
 import Control.Monad.State
 import Control.Monad.Reader

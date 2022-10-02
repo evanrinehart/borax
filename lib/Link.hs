@@ -7,7 +7,7 @@ import qualified Data.IntMap as IM
 
 import PackedString
 import Heap
-import Compile
+import Prepare
 
 data Borax = Borax
   { bxHeap :: Heap

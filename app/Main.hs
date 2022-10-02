@@ -10,9 +10,9 @@ import Data.Functor
 
 import Syntax
 import Parser
-import Compile
+import Prepare
 import Link
-import Eval
+import Interpret
 import System
 
 import Text.Pretty.Simple
