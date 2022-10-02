@@ -402,37 +402,6 @@ stringsInExpr = foldMapExpr f where
   f (ExConst (ConstS str)) = [str]
   f _ = []
 
-{-
-stringsInExpr :: Expr -> [String]
-stringsInExpr = execWriter . go where
-  go :: Expr -> Writer [String] ()
-  go (ParenExpr ex) = go ex
-  go (ConstExpr (ConstString str)) = tell [str]
-  go (ConstExpr _) = return ()
-  go (AssignExpr _ e1 e2) = do
-    go e1
-    go e2
-  go (PreIncDec _ ex) = go ex
-  go (PostIncDec _ ex) = go ex
-  go (AmpersandExpr ex) = go ex
-  go (UnaryExpr _ ex) = go ex
-  go (BinaryExpr _ e1 e2) = do
-    go e1
-    go e2
-  go (TernaryExpr e1 e2 e3) = do
-    go e1
-    go e2
-    go e3
-  go (FunctionExpr e es) = do
-    go e
-    mapM_ go es
-  go (NameExpr _) = return ()
-  go (StarExpr ex) = go ex
-  go (VectorExpr e1 e2) = do
-    go e1
-    go e2
--}
-
 
 borateStrings :: [Borate LinkMe] -> [String]
 borateStrings = nub . foldMap f where

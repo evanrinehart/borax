@@ -2,11 +2,13 @@
 module Expr where
 
 import Control.Monad.State
+import Control.Monad.Writer
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
 import Data.Fix
 import Data.Functor.Classes
 import Data.Semigroup
+import Data.List (intersperse)
 import Data.List.NonEmpty ( NonEmpty( (:|) ) )
 
 -- tool to break up an expression into numbered components
@@ -199,3 +201,54 @@ showBinaryOp o = case o of
   Modulo -> "%"
   Times -> "*"
   Division -> "/"
+
+showExpr :: Expr -> String
+showExpr = execWriter . go . unFix where
+  go :: ExprOf Expr -> Writer String ()
+  go (ExConst k) = do
+    tell (showConstant k)
+  go (ExAssign (Fix ex1) (Fix ex2)) = do
+    go ex1
+    tell " = "
+    go ex2
+  go (ExAssignOp op (Fix ex1) (Fix ex2)) = do
+    go ex1
+    tell " ="
+    tell (showBinaryOp op)
+    tell " "
+    go ex2
+  go (ExName name) = do
+    tell name
+  go (ExAmp (Fix ex)) = do
+    tell "&"
+    go ex
+  go (ExStar (Fix ex)) = do
+    tell "*"
+    go ex
+  go (ExUnary unop (Fix ex)) = do
+    tell (case unop of Negative -> "-"; LogicNot -> "!"; BitComplement -> "~")
+    go ex
+  go (ExBinary op (Fix ex1) (Fix ex2)) = do
+    go ex1
+    tell (showBinaryOp op)
+    go ex2
+  go (ExPreInc (Fix ex)) = tell "++" >> go ex
+  go (ExPreDec (Fix ex)) = tell "--" >> go ex
+  go (ExPostInc (Fix ex)) = go ex >> tell "++"
+  go (ExPostDec (Fix ex)) = go ex >> tell "--"
+  go (ExTernary (Fix ex1) (Fix ex2) (Fix ex3)) = do
+    go ex1
+    tell "?"
+    go ex2
+    tell ":"
+    go ex3
+  go (ExFunc (Fix exfun) exargs) = do
+    go exfun
+    tell "("
+    sequence (intersperse (tell ",") (map (go . unFix) exargs))
+    tell ")"
+  go (ExVector (Fix ex1) (Fix ex2)) = do
+    go ex1
+    tell "["
+    go ex2
+    tell "]"
