@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 module Baby where
 
+import qualified Expr
+
 import Control.Monad.State
 import qualified Data.IntMap as IM; import Data.IntMap (IntMap)
 import qualified Data.Map as M; import Data.Map (Map)
@@ -17,18 +19,34 @@ import Text.Megaparsec hiding (State, label)
 import Text.Megaparsec.Char
 type Parser = Parsec Void String
 
+data K =
+  KN Int |
+  KC Char |
+  KCS [Char] |
+  KStr String
+    deriving (Eq,Show)
+
 data E =
-  ENum Int |
+  EK K |
   EVar String |
   ECond E E E |
   ECall E [E] |
-  EQuo E E |
-  EAdd E E |
-  EShr E E |
-  ELT E E |
-  ENeg E |
+  EUn  Unop  E |
+  EBin Binop E E |
+  EAssignOp Binop E E |
+  EAssign E E |
+  EPFix String E |
   EAmp E |
-  EStar E
+  EStar E |
+  EVect E E
+    deriving Show
+
+data Unop =
+  Minus | Bang | Tilde deriving Show
+data Binop = 
+  BAdd | BSub | BMul | BDiv | BMod |
+  BShr | BShl | BAnd | BOr  | BXor |
+  BLt  | BLte | BGt  | BGte | BEq  | BNeq
     deriving Show
 
 data R =
@@ -41,7 +59,7 @@ data R =
 data Loc = LReg R | LExtra Int | LVar String
   deriving (Eq,Show)
 
-data Operand = ON Int | OL Loc
+data Operand = OK K | OL Loc
   deriving (Eq,Show)
 
 data CallConfig = C1 R Loc | C2 Loc
@@ -86,23 +104,15 @@ baby str = do
   putStrLn (ppIR code)
 
 ir :: R -> E -> IRGen [IRIns]
-ir dst (ENum z) = return [LReg dst `Stab0` ON z]
+ir dst (EK k)   = return [LReg dst `Stab0` OK k]
 ir dst (EVar x) = return [LReg dst `Stab0` OL (LVar x)]
 ir dst (EAmp (EVar x)) = return [LReg dst `StabVarAddr` x]
 ir dst (EAmp (EStar e1)) = ir dst e1
-ir dst (EQuo e1 e2) = do 
-  (loc, bs) <- uir e2
-  as <- ir RAX e1
-  forget 1
-  return (bs ++ as ++ [(LReg dst `Stab2` RAX) "/" (OL loc)])
-ir dst (EShr e1 e2) = do
-  (loc, bs) <- uir e2
+ir dst (EBin BDiv e1 e2) = irdiv BDiv dst e1 e2
+ir dst (EBin BMod e1 e2) = irdiv BMod dst e1 e2
+ir dst (EUn unop e1) = do
   as <- ir dst e1
-  forget 1
-  return (bs ++ as ++ [(LReg dst `Stab2` dst) ">>" (OL loc)])
-ir dst (ENeg e1) = do
-  as <- ir dst e1
-  return [(LReg dst `Stab1` "negate") (OL (LReg dst))]
+  return [(LReg dst `Stab1` unopKeyword unop) (OL (LReg dst))]
 
 ir dst (ECond e1 e2 e3) = do
   (comparison, code) <- ircmp e1
@@ -149,6 +159,20 @@ ir dst (ECall e es) = do
     , stackArgsCode
     , regArgsCode
     , [(LReg dst `StabCall` length es) (OL fun) callConfigs ]]
+ir dst (EBin BShr e1 e2) = do
+  -- in a non commutative binop we need to keep the order
+  -- still, better to evaluate the deeper side first
+  (loc, bs) <- uir e2
+  as <- ir dst e1
+  forget 1
+  return (bs ++ as ++ [(LReg dst `Stab2` dst) ">>" (OL loc)])
+ir dst (EBin BAdd e1 e2) = do
+  -- better to evaluate the deeper side first.
+  -- since + is commutative, we can bring deeper side into operand 1
+  (loc, bs) <- uir e2
+  as <- ir dst e1
+  forget 1
+  return (bs ++ as ++ [(LReg dst `Stab2` dst) "+" (OL loc)])
 
 
 uir :: E -> IRGen (Loc, [IRIns])
@@ -165,14 +189,21 @@ uir e = do
 -- generate code to do a comparison in context of a conditional
 -- i.e. we don't need the actual result, only flags
 ircmp :: E -> IRGen (Comparison, [IRIns])
-ircmp (ELT e1 e2) = do
+ircmp (EBin BLt e1 e2) = do
   (loc,as) <- uir e2
   bs <- ir RAX e1
   forget 1
   return ("nlt", as ++ bs ++ [StabCmp Nothing RAX (OL loc)])
 ircmp other = do
   code <- ir RAX other
-  return ("nz", code ++ [StabCmp Nothing RAX (ON 0)])
+  return ("nz", code ++ [StabCmp Nothing RAX (OK (KN 0))])
+
+irdiv :: Binop -> R -> E -> E -> IRGen [IRIns]
+irdiv op dst e1 e2 = do 
+  (loc, bs) <- uir e2
+  as <- ir RAX e1
+  forget 1
+  return (bs ++ as ++ [(LReg dst `Stab2` RAX) (binopKeyword op) (OL loc)])
 
 {-
 
@@ -328,7 +359,7 @@ utterMove dst src = do
 -}
 
 
-ppE (ENum z) = show z
+ppE (EK k) = showK k
 ppE (EVar x) = x
 ppE (ECond e1 e2 e3) = ppE e1 ++ " ? " ++ ppE e2 ++ " : " ++ ppE e3
 ppE (ECall e es) = "Call("++ppE e++")["++concat (intersperse "," (map ppE es))++"]"
@@ -362,10 +393,15 @@ ppIR ins = unlines $ concatMap g ins where
     let spc = replicate 7 ' ' in
     [heading ++ l] ++ map (spc ++) mid ++ [spc ++ end ++ " }"]
 
+showK :: K -> String
+showK (KN z)     = show z
+showK (KC c)     = Expr.encodeC c
+showK (KCS cs)   = Expr.showWideChar cs
+showK (KStr str) = str
 
 showOpd :: Operand -> String
 showOpd (OL l) = showLoc l
-showOpd (ON z) = show z
+showOpd (OK k) = showK k
 
 showLoc :: Loc -> String
 showLoc (LReg r) = showR r
@@ -425,73 +461,36 @@ showA a = f a where
 
 
 parseE :: String -> E
-parseE str = case runParser (space >> anyExprParser) "unknown" str of
+parseE str = case runParser (space >> anyExpr) "unknown" str of
   Left eb -> error (show eb)
   Right e -> e
 
-anyExprParser :: Parser E
-anyExprParser = condParser
-
-primaryParser :: Parser E
-primaryParser = do
-  h <- varParser <|> numParser <|> parensParser
-  suffixes <- many primaryEtc
-  return (foldl (flip ($)) h suffixes)
-
-primaryEtc :: Parser (E -> E)
-primaryEtc = do
-  char '(' >> space
-  x <- anyExprParser
-  char ',' >> space
-  y <- anyExprParser
-  char ')' >> space
-  return (\e -> ECall e [x,y])
-
-binopChainParser :: Parser E
-binopChainParser = do
-  e1 <- primaryParser
-  suffixes <- many $ do
-    char '/' >> space
-    denom <- anyExprParser
-    return (\e -> EQuo e denom)
-  return (foldl (flip ($)) e1 suffixes)
-
-condParser :: Parser E
-condParser = do
-  e1 <- binopChainParser
-  mquestion <- optional (char '?')
-  space
-  case mquestion of
-    Nothing -> return e1
-    Just _  -> do
-      e2 <- anyExprParser
-      char ':' >> space
-      e3 <- anyExprParser
-      return (ECond e1 e2 e3)
-
-numParser :: Parser E
-numParser = do
-  mneg <- optional (char '-')
-  cs <- some digitChar
-  space
-  let sign = case mneg of Nothing -> id; Just _ -> negate
-  return (ENum (sign (read cs)))
-
-varParser :: Parser E
-varParser = do
-  c  <- letterChar
-  cs <- many alphaNumChar
-  space
-  return (EVar (c:cs))
-
-parensParser :: Parser E
-parensParser = do
-  char '(' >> space
-  e <- anyExprParser
-  char ')' >> space
-  return e
 
 
+
+unopKeyword :: Unop -> String
+unopKeyword Minus = "negate"
+unopKeyword Tilde = "complement"
+unopKeyword Bang  = "not"
+
+binopKeyword :: Binop -> String
+binopKeyword = f where
+  f BAdd = "+"
+  f BSub = "-"
+  f BMul = "*"
+  f BDiv = "/"
+  f BMod = "%"
+  f BShr = ">>"
+  f BShl = "<<"
+  f BAnd = "&"
+  f BOr  = "|"
+  f BXor = "^"
+  f BLt  = "<"
+  f BLte = "<="
+  f BGt  = ">"
+  f BGte = ">="
+  f BEq  = "=="
+  f BNeq = "!="
 
 
 -- argument expression resequencing
@@ -529,7 +528,8 @@ isHome _                                       = False
 clobbersWhat :: E -> Clobbers
 clobbersWhat e = f e where
   f (ECall _ _) = ClobbersEverything
-  f (EQuo e1 e2) = minimum [f e1, f e2, ClobbersRDX]
+  f (EBin BDiv e1 e2) = minimum [f e1, f e2, ClobbersRDX]
+  f (EBin BMod e1 e2) = minimum [f e1, f e2, ClobbersRDX]
   f (ECond e1 e2 e3) = minimum [f e1, f e2, f e3]
   f _ = ClobbersNothing
 
@@ -624,4 +624,294 @@ instance Semigroup AsmBuilder where
 instance Monoid AsmBuilder where
   mempty = AsmBuilder id
 -}
+
+-- expression parsers, they are factored to remove left recursion
+anyExpr :: Parser E
+anyExpr = assignChain
+
+assignChain :: Parser E
+assignChain = chainr1 ternaries assignmentOp
+
+ternaries :: Parser E
+ternaries = do
+  a <- bitOrChain 
+  questionMaybe <- optional (char '?')
+  remspace
+  case questionMaybe of
+    Nothing -> return a
+    Just _ -> do
+      b <- ternaries
+      char ':'
+      remspace
+      c <- ternaries
+      return (ECond a b c)
+
+bitOrChain :: Parser E
+bitOrChain = chainl1 bitAndChain op where
+  op = wrapbin BOr <$ (char '|' >> remspace)
+
+bitAndChain :: Parser E
+bitAndChain = chainl1 equalityChain op where
+  op = wrapbin BAnd <$ (char '&' >> remspace)
+
+equalityChain :: Parser E
+equalityChain = chainl1 relationalChain op where
+  op =
+    wrapbin BEq  <$ (string "==" >> remspace) <|>
+    wrapbin BNeq <$ (string "!=" >> remspace)
+
+relationalChain :: Parser E
+relationalChain = chainl1 shiftChain op where
+  op =
+    wrapbin BLt  <$ (char '<' >> remspace) <|>
+    wrapbin BLte <$ (string "<=" >> remspace) <|>
+    wrapbin BGt  <$ (char '>' >> remspace) <|>
+    wrapbin BGte <$ (string ">=" >> remspace)
+
+shiftChain :: Parser E
+shiftChain = chainl1 additiveChain shiftOp
+
+additiveChain :: Parser E
+additiveChain = chainl1 multChain additiveOp
+
+multChain :: Parser E
+multChain = chainl1 unaryExpr multOp
+
+unaryExpr :: Parser E
+unaryExpr = do
+  wrappers <- reverse <$> many prefixOp
+  body <- primaryWithPostOp
+  return (foldl (\e f -> f e) body wrappers)
+
+primaryWithPostOp :: Parser E
+primaryWithPostOp = do
+  body <- primaryExpr
+  wrappers <- many postfixOp
+  return (foldl (\e f -> f e) body wrappers)
+
+primaryExpr :: Parser E
+primaryExpr = do
+  h <- nameExpr <|> constExpr <|> parenExpr
+  suffixes <- many (primaryEtc1 <|> primaryEtc2)
+  return (foldl (.) id suffixes h)
+
+nameExpr :: Parser E
+nameExpr = do
+  x <- validName
+  remspace
+  return (EVar x)
+
+constExpr :: Parser E
+constExpr = do
+  k <- constant
+  return (EK k)
+
+parenExpr :: Parser E
+parenExpr = do
+  char '('
+  remspace
+  body <- anyExpr
+  char ')'
+  remspace
+  return body
+
+primaryEtc1 :: Parser (E -> E)
+primaryEtc1 = do
+  char '['
+  remspace
+  body <- anyExpr
+  char ']'
+  remspace
+  return (\h -> EVect h body)
+
+primaryEtc2 :: Parser (E -> E)
+primaryEtc2 = do
+  char '('
+  remspace
+  args <- anyExpr `sepBy` (char ',' >> remspace)
+  char ')'
+  remspace
+  return (\h -> ECall h args)
+
+-- operator parsers
+
+prefixOp :: Parser (E -> E)
+prefixOp =
+  wrapunary Bang <$ (char '!' >> remspace) <|>
+  wrapunary Minus <$ (char '-' >> remspace) <|>
+  wrapunary Tilde <$ (char '~' >> remspace) <|>
+  starE <$ (char '*' >> remspace) <|>
+  ampE  <$ (char '&' >> remspace) <|>
+  plusPlusE   <$ (string "++" >> remspace) <|>
+  minusMinusE <$ (string "--" >> remspace)
+
+postfixOp :: Parser (E -> E)
+postfixOp =
+  ePlusPlus   <$ (string "++" >> remspace) <|>
+  eMinusMinus <$ (string "--" >> remspace)
+
+ePlusPlus e   = EPFix "_++" e
+eMinusMinus e = EPFix "_--" e
+plusPlusE e   = EPFix "++_" e
+minusMinusE e = EPFix "--_" e
+ampE e        = EAmp e
+starE e       = EStar e
+wrapunary op e = EUn op e
+
+multOp :: Parser (E -> E -> E)
+multOp =
+  wrapbin BMod <$ (char '%' >> remspace) <|>
+  wrapbin BMul <$ (char '*' >> remspace) <|>
+  wrapbin BDiv <$ (char '/' >> remspace)
+
+additiveOp :: Parser (E -> E -> E)
+additiveOp = 
+  wrapbin BAdd  <$ (char '+' >> remspace) <|>
+  wrapbin BSub <$ (char '-' >> remspace)
+
+shiftOp :: Parser (E -> E -> E)
+shiftOp =
+  wrapbin BShl <$ (string "<<" >> remspace) <|>
+  wrapbin BShr <$ (string ">>" >> remspace)
+
+wrapbin :: Binop -> E -> E -> E
+wrapbin op e1 e2 = EBin op e1 e2
+
+assignmentOp :: Parser (E -> E -> E)
+assignmentOp = do
+  char '='
+  mop <- optional binaryOp
+  remspace
+  case mop of
+    Nothing -> return (\e1 e2 -> EAssign e1 e2)
+    Just op -> return (\e1 e2 -> EAssignOp op e1 e2)
+
+chainl1 :: Parser term -> Parser (term -> term -> term) -> Parser term
+chainl1 term op = do
+  t0 <- term
+  loop t0 where
+    loop accum = do
+      combineMaybe <- optional op
+      case combineMaybe of
+        Nothing -> return accum
+        Just combine -> do
+          t <- term
+          loop (accum `combine` t)
+
+chainr1 :: Parser term -> Parser (term -> term -> term) -> Parser term
+chainr1 term op = do
+  t0 <- term
+  builder <- loop
+  return (builder t0) where
+    loop = do
+      combineMaybe <- optional op
+      case combineMaybe of
+        Nothing -> return id
+        Just combine -> do
+          t <- term
+          builder <- loop
+          return (\pre -> pre `combine` builder t)
+
+remspace :: Parser ()
+remspace = do
+  space
+  many $ do
+    string "/*"
+    anySingle `skipManyTill` (string "*/")
+    space
+  return ()
+
+remspace1 :: Parser ()
+remspace1 = do
+  spaceChar
+  remspace
+
+binaryOp :: Parser Binop
+binaryOp =
+  BOr <$ char '|' <|>
+  BAnd <$ char '&' <|>
+  BEq <$ string "==" <|>
+  BNeq <$ string "!=" <|>
+  BLt <$ char '<' <|>
+  BLte <$ string "<=" <|>
+  BGt <$ char '>' <|>
+  BGte <$ string ">=" <|>
+  BShl <$ string "<<" <|>
+  BShr <$ string ">>" <|>
+  BAdd <$ char '+' <|>
+  BSub <$ char '-' <|>
+  BMod <$ char '%' <|>
+  BMul <$ char '*' <|>
+  BDiv <$ char '/'
+
+constant :: Parser K
+constant =
+  KN <$> numericConstant <|>
+  KStr <$> stringConstant <|>
+  charConstant
+
+numericConstant :: Parser Int
+numericConstant = do
+  ds <- some digitChar
+  remspace
+  case ds of
+    "0"        -> return 0
+    ('0':more) -> return (funnyOctal more)
+    _          -> return (read ds)
+
+funnyOctal :: String -> Int
+funnyOctal = foldl1 (\a o -> a*8 + o) . map digitToInt
+
+stringConstant :: Parser String
+stringConstant = do
+  char '"'
+  str <- escapeSequence `manyTill` char '"'
+  remspace
+  return str
+
+charConstant :: Parser K
+charConstant = do
+  char '\''
+  cs <- escapeSequence `manyTill` char '\''
+  remspace
+  case cs of
+    [c] -> pure (KC c)
+    _   -> pure (KCS cs)
+
+escapeSequence :: Parser Char
+escapeSequence = do
+  c <- printChar
+  case c of
+    '*' -> do
+      c2 <- printChar
+      case c2 of
+        '0' -> return '\0'
+        'e' -> return '\EOT'
+        '(' -> return '{'
+        ')' -> return '}'
+        't' -> return '\t'
+        '*' -> return '*'
+        '\'' -> return '\''
+        '"' -> return '"'
+        'n' -> return '\n'
+        _ -> fail "unknown escape sequence"
+    '\'' -> fail "empty char constant"
+    _ -> return c  
+
+validName :: Parser String
+validName = do
+  c <- letterChar <|> char '_' <|> char '.'
+  cs <- many (alphaNumChar <|> char '_' <|> char '.')
+  remspace
+  case c:cs of
+    "auto"   -> fail "auto is a reserved word"
+    "extrn"  -> fail "extrn is a reserved word"
+    "case"   -> fail "case is a reserved word"
+    "if"     -> fail "if is a reserved word"
+    "while"  -> fail "while is a reserved word"
+    "switch" -> fail "switch is a reserved word"
+    "goto"   -> fail "goto is a reserved word"
+    "break"  -> fail "break is a reserved word"
+    "return" -> fail "return is a reserved word"
+    _ -> return (c : cs)
 
