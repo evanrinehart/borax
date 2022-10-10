@@ -4,6 +4,11 @@ module Baby where
 import Control.Monad.State
 import qualified Data.IntMap as IM; import Data.IntMap (IntMap)
 import qualified Data.Map as M; import Data.Map (Map)
+import Data.List (union, sortBy, minimum, intersperse)
+import Data.Maybe
+import Data.Char
+
+import Data.Ord
 
 import Debug.Trace
 
@@ -16,142 +21,208 @@ data E =
   ENum Int |
   EVar String |
   ECond E E E |
-  ECall E E E
+  ECall E [E] |
+  EQuo E E |
+  EAdd E E |
+  EShr E E |
+  ELT E E |
+  ENeg E |
+  EAmp E |
+  EStar E
     deriving Show
 
-data Asm =
-  CMP A A |
-  MOV A A |
-  JMP String |
-  JZ String |
-  CALL A
-    deriving Show
-
-data A =
+data R =
   RAX | RBX | RCX | RDX |
   RDI | RSI | RBP | RSP |
-  R8 | R9 | R10 | R11 |
-  R12 | R13 | R14 | R15 |
-  IMM Int | SYM String | Brack A | Brack2 A A
+  R8  | R9  | R10 | R11 |
+  R12 | R13 | R14 | R15
     deriving (Eq,Ord,Show)
 
-data Location =
-  InRegister A |
-  OnStack Int |
-  Global String
-    deriving (Eq,Ord,Show)
+data Loc = LReg R | LExtra Int | LVar String
+  deriving (Eq,Show)
 
-newtype AsmBuilder = AsmBuilder { buildAsm :: [Either String Asm] -> [Either String Asm] }
+data Operand = ON Int | OL Loc
+  deriving (Eq,Show)
 
-instance Show AsmBuilder where
-  show (AsmBuilder f) = show (f [])
+data CallConfig = C1 R Loc | C2 Loc
+  deriving (Eq,Show)
 
-asm :: Asm -> AsmBuilder
-asm a = AsmBuilder (\rest -> Right a : rest)
+type Comparison = String
 
-label :: String -> AsmBuilder
-label l = AsmBuilder (\rest -> Left l : rest)
+data IRIns =
+  IRCond Comparison [IRIns] [IRIns] |
+  StabCmp (Maybe Loc) R Operand |
+  Stab0 Loc Operand |
+  Stab1 Loc String Operand |
+  StabCall Loc Int Operand [CallConfig] |
+  StabVarAddr Loc String |
+  Stab2 Loc R String Operand
+    deriving (Show)
 
-instance Semigroup AsmBuilder where
-  AsmBuilder g <> AsmBuilder f = AsmBuilder (g . f)
+type IRGen a = State [Loc] a
 
-instance Monoid AsmBuilder where
-  mempty = AsmBuilder id
+allTheTemps = rs ++ extras where
+  rs     = map LReg   [R15,R14,R13,R12]
+  extras = map LExtra [1..]
 
-functionOperand :: Location -> A
-functionOperand (InRegister r) = r
-functionOperand (Global name) = SYM name
-functionOperand (OnStack i) = Brack2 RBP (IMM (negate (8 * i)))
+previousTemp :: Loc -> Loc
+previousTemp (LExtra 1) = LReg R12
+previousTemp (LExtra n) = LExtra (n-1)
+previousTemp (LReg R12) = LReg R13
+previousTemp (LReg R13) = LReg R14
+previousTemp (LReg R14) = LReg R15
 
--- stack based IR
+forget :: Int -> IRGen ()
+forget n = replicateM_ n $ do
+  current <- gets head 
+  modify (previousTemp current:)
 
-data Hint = NoHint | HintRDI | HintRSI | HintRAX deriving Show
-data Atom = AN Int | AV String deriving Show
-data Cmd = Cmd Hint Ins deriving Show
-data Ins =
-  PushA Atom |
-  Call2 (Maybe String) |
-  Cond [Cmd] [Cmd]
-    deriving Show
+temp :: IRGen Loc
+temp = state (\(l:ls) -> (l, ls))
 
-stackIR :: E -> [Cmd]
-stackIR (ENum z) = [Cmd NoHint (PushA (AN z))]
-stackIR (EVar x) = [Cmd NoHint (PushA (AV x))]
-stackIR (ECall (EVar f) e1 e2) =
-  stackIRHint HintRDI e1 ++
-  stackIRHint HintRSI e2 ++
-  [Cmd HintRAX (Call2 (Just f))]
-stackIR (ECall e1 e2 e3) =
-  stackIRHint HintRDI e2 ++
-  stackIRHint HintRSI e3 ++
-  stackIR e1 ++
-  [Cmd HintRAX (Call2 Nothing)]
-stackIR (ECond e1 e2 e3) = -- the two branches might leave the result in two locations
-  stackIR e1 ++
-  [Cmd NoHint (Cond (stackIR e2) (stackIR e3))]
+baby :: String -> IO ()
+baby str = do
+  let code = evalState (ir RAX (parseE str)) allTheTemps
+  putStrLn (ppIR code)
 
-stackIRHint hint e = case stackIR e of
-  (Cmd NoHint ins : rest) -> Cmd hint ins : rest
-  other                   -> other
+ir :: R -> E -> IRGen [IRIns]
+ir dst (ENum z) = return [LReg dst `Stab0` ON z]
+ir dst (EVar x) = return [LReg dst `Stab0` OL (LVar x)]
+ir dst (EAmp (EVar x)) = return [LReg dst `StabVarAddr` x]
+ir dst (EAmp (EStar e1)) = ir dst e1
+ir dst (EQuo e1 e2) = do 
+  (loc, bs) <- uir e2
+  as <- ir RAX e1
+  forget 1
+  return (bs ++ as ++ [(LReg dst `Stab2` RAX) "/" (OL loc)])
+ir dst (EShr e1 e2) = do
+  (loc, bs) <- uir e2
+  as <- ir dst e1
+  forget 1
+  return (bs ++ as ++ [(LReg dst `Stab2` dst) ">>" (OL loc)])
+ir dst (ENeg e1) = do
+  as <- ir dst e1
+  return [(LReg dst `Stab1` "negate") (OL (LReg dst))]
 
-data StackData = StackData
-  { sdBuilder  :: AsmBuilder
-  , sdLabelGen :: Int
-  , sdReserve  :: [Location]
-  , sdActive   :: [Location] }
+ir dst (ECond e1 e2 e3) = do
+  (comparison, code) <- ircmp e1
+  bs <- ir dst e2
+  cs <- ir dst e3
+  return (code ++ [IRCond comparison bs cs])
 
-dummySD :: StackData
-dummySD = StackData
-  { sdBuilder  = mempty
-  , sdLabelGen = 1
-  , sdReserve  = map InRegister [R15,R14,R13,R12] ++ map OnStack [1..]
-  , sdActive   = [] }
+ir dst (ECall e es) = do
+  let (firstSixE, moreE) = splitAt 6 es
+
+  -- in general you need to compute the function to call
+  (simpleHead, fun, headCode) <- case e of
+    EVar name -> return (True, LVar name, [])
+    _ -> do
+      (loc, code) <- uir e
+      return (False, loc, code)
+
+  -- compute arguments 7+ and hold them in temporaries
+  moreStuff <- mapM uir moreE
+  let stackArgsCode = concatMap snd moreStuff
+  let callConfigs2  = map (C2 . fst) moreStuff
+
+  -- compute arguments 1 through 6 out of order to avoid clobbering
+  let outOfOrders = sequenceArgs firstSixE
+  argData <- forM outOfOrders $ \ae -> case aeDst ae of
+    Nothing -> do
+      (loc, code) <- uir (aeEx ae)
+      return $ ArgData {adHome = aeHome ae, adLoc = loc, adCode = code}
+    Just dr -> do
+      code <- ir dr (aeEx ae)
+      return $ ArgData {adHome = aeHome ae, adLoc = LReg dr, adCode = code}
+  let regArgsCode = concatMap adCode argData
+  let strays = filter (not . isHome) argData
+  let callConfigs1 = map (\ArgData{adHome=r,adLoc=l} -> C1 r l) strays
+
+  -- 0 or 1 temp for fun head
+  -- 1 temp for each argument after 6
+  -- 1 temp for each stray
+  -- no longer needed
+  forget (if simpleHead then 0 else 1 + length moreE + length strays)
+  let callConfigs  = callConfigs1 ++ callConfigs2
+  (return . concat) $
+    [ headCode
+    , stackArgsCode
+    , regArgsCode
+    , [(LReg dst `StabCall` length es) (OL fun) callConfigs ]]
+
+
+uir :: E -> IRGen (Loc, [IRIns])
+uir e = do
+  loc <- temp
+  case loc of
+    LReg dst -> do
+      outs <- ir dst e
+      return (loc, outs)
+    LExtra i -> do
+      outs <- ir RBX e
+      return (loc, outs ++ [loc `Stab0` OL (LReg RBX)])
+
+-- generate code to do a comparison in context of a conditional
+-- i.e. we don't need the actual result, only flags
+ircmp :: E -> IRGen (Comparison, [IRIns])
+ircmp (ELT e1 e2) = do
+  (loc,as) <- uir e2
+  bs <- ir RAX e1
+  forget 1
+  return ("nlt", as ++ bs ++ [StabCmp Nothing RAX (OL loc)])
+ircmp other = do
+  code <- ir RAX other
+  return ("nz", code ++ [StabCmp Nothing RAX (ON 0)])
+
+{-
+
 
 codegenExpr :: Int -> E -> (AsmBuilder, Int)
 codegenExpr g expr =
-  let ir  = stackIR expr
-      sd' = execState (stackGens ir) (dummySD { sdLabelGen = g })
+  let ir  = stackIR HintRAX expr
+      sd' = execState (mapM_ cmdToCode ir) (dummySD { sdLabelGen = g })
   in (sdBuilder sd', sdLabelGen sd')
 
 codegen :: [Cmd] -> AsmBuilder
 codegen ir =
-  let sd' = execState (stackGens ir) (dummySD { sdLabelGen = 1 })
+  let sd' = execState (mapM_ cmdToCode ir) (dummySD { sdLabelGen = 1 })
   in sdBuilder sd'
 
 runStackGen :: State StackData a -> StackData -> AsmBuilder
 runStackGen act sd = sdBuilder (execState act sd)
 
-stackGens :: [Cmd] -> State StackData ()
-stackGens cmds = do
-  let (sx, x) = unsnoc cmds
-  mapM (stackGen False) sx
-  stackGen True x
+useHint :: Hint -> State StackData Location
+useHint NoHint = popReserve
+useHint hint   = return (hintToLocation hint)
 
-stackGen :: Bool -> Cmd -> State StackData ()
-stackGen final (Cmd _ ins) = case ins of
+cmdToCode :: Cmd -> State StackData ()
+cmdToCode (Cmd hint ins) = case ins of
   PushA at -> do
-    dst <- if final then pure (InRegister RAX) else popReserve
-    pushActive dst
+    dst <- useHint hint
+    pushActive (traceShow ("cmdToCode PushA", "hint=", hint, "ins=", ins) dst)
     utter (asm (MOV (locationOperand dst) (atomOperand at)))
 
+  -- WRONG --
+  Quotient maybeArg -> do
+    error "quotient codegen?"
+
+  Wrangle ixs -> do
+    error "wrangle: bring values in reserve into proper locations"
+
   Call2 maybeName -> do
-    arg2 <- consume
-    arg1 <- consume
-    utter (asm (MOV RDI (locationOperand arg1)))
-    utter (asm (MOV RSI (locationOperand arg2)))
 
     case maybeName of
       Just name -> do
         utter (asm (CALL (SYM name)))
       Nothing   -> do
-        fun  <- consume
+        fun <- consume
         utter (asm (CALL (functionOperand fun)))
 
-    if final
-      then do
+    case hint of
+      HintRAX -> do
         pushActive (InRegister RAX)
-      else do
-        dst <- popReserve
+      _ -> do
+        dst <- useHint hint
         pushActive dst
         utterMove dst (InRegister RAX)
 
@@ -161,15 +232,12 @@ stackGen final (Cmd _ ins) = case ins of
     scrute <- consume
     utter (asm (CMP (locationOperand scrute) (IMM 0)))
     utter (asm (JZ label1))
-    let (sx, x) = unsnoc body1
-    stackGen False `mapM_` sx
-    stackGen final x -- wherever the result is, it needs to match next block
+    mapM_ cmdToCode body1
+    -- wherever the result is, it needs to match next block
     loc1 <- peekActive
     utter (asm (JMP label2))
     utter (label label1)
-    let (sx, x) = unsnoc body2
-    stackGen False `mapM_` sx
-    stackGen final x
+    mapM_ cmdToCode body2
     loc2 <- peekActive
     when (loc1 /= loc2) $ do
       adjustActiveTo loc1
@@ -217,10 +285,28 @@ consume = do
   pushReserve loc
   return loc
 
+consumeFrom :: Location -> State StackData ()
+consumeFrom r1 = do
+  r2 <- consume
+  if r1 /= r2
+    then utter (asm (MOV (locationOperand r1) (locationOperand r2)))
+    else return ()
+
+-- the operand to access a location
+-- register   - itself
+-- extra i    - stack extrabase + 8 * i
+-- local x    - stack localsbase + 8 * i
+-- global x   - operand is a symbol
 locationOperand :: Location -> A
 locationOperand (InRegister r) = r
-locationOperand (OnStack i) = Brack2 RBP (IMM (negate (8 * i)))
+locationOperand (InExtra i) = Brack2 RBP (IMM (negate (8 * i)))
 
+-- operand for an atom, which is what I called and should rename,
+-- something which can be compiled directly into the instruction
+-- instead of computed separately and then referenced by register
+-- number - itself
+-- variable - right now, assumes a global
+-- variable - but it could be a local / argument
 atomOperand :: Atom -> A
 atomOperand (AN z) = IMM z
 atomOperand (AV x) = Brack (SYM x)
@@ -239,33 +325,35 @@ adjustActiveTo dst = do
 utterMove :: Location -> Location -> State StackData ()
 utterMove dst src = do
   utter (asm (MOV (locationOperand dst) (locationOperand src)))
-
-unsnoc :: [a] -> ([a], a)
-unsnoc [] = ([], error "unsnoc []")
-unsnoc [x] = ([], x)
-unsnoc more = (init more, last more)
-
+-}
 
 
 ppE (ENum z) = show z
 ppE (EVar x) = x
 ppE (ECond e1 e2 e3) = ppE e1 ++ " ? " ++ ppE e2 ++ " : " ++ ppE e3
-ppE (ECall e1 e2 e3) = paren e1 (ppE e1) ++ "(" ++ ppE e2 ++ ", " ++ ppE e3 ++ ")" where
-  paren (ECond _ _ _) body = "(" ++ body ++ ")"
-  paren _             body = body
+ppE (ECall e es) = "Call("++ppE e++")["++concat (intersperse "," (map ppE es))++"]"
 
-ppIR :: [Cmd] -> String
-ppIR cmds = unlines $ concatMap g cmds where
-  g (Cmd hint (Cond ir1 ir2)) = 
+
+ppIR :: [IRIns] -> String
+ppIR ins = unlines $ concatMap g ins where
+  g :: IRIns -> [String]
+  g (IRCond c body1 body2) = 
     let spc = replicate 6 ' '
-        ls1 = concatMap g ir1
-        ls2 = concatMap g ir2
-    in map (spc ++) (f "if _ { " ls1) ++
-       map (spc ++) (f "else { " ls2)
-  g (Cmd hint ins) = [showHint hint ++ showIns ins] where
-    showIns (PushA at) = "push " ++ showAtom at
-    showIns (Call2 Nothing) = "call2"
-    showIns (Call2 (Just name)) = "call2 " ++ name
+        ls1 = concatMap g body1 :: [String]
+        ls2 = concatMap g body2 :: [String]
+        h1 = "if " ++ c ++ " { "
+        h2 = "else " ++ replicate (length c - 2) ' ' ++ " { "
+    in map id (f h1 ls1) ++
+       map id (f h2 ls2)
+  g (Stab0 d opd)      = [concat [showLoc d, " ← ", showOpd opd]]
+  g (Stab1 d code opd) = [concat [showLoc d, " ← ", code, " ", showOpd opd]]
+  g (Stab2 d r code opd) =
+    [concat [showLoc d, " ← ", showR r, " ", code, " ", showOpd opd]]
+  g (StabCall d n fun configs) =
+    [concat [showLoc d, " ← call", show n, " ", showOpd fun, showConfigs configs]]
+  g (StabVarAddr d name) = [concat [showLoc d, " ← ", "&", name]]
+  g (StabCmp md r opd) =
+    [concat [maybe "_" showLoc md, " ← cmp ", showR r, " ", showOpd opd]]
   f :: String -> [String] -> [String]
   f heading [l]    = [heading ++ l ++ " }"]
   f heading (l:ls) =
@@ -274,14 +362,29 @@ ppIR cmds = unlines $ concatMap g cmds where
     let spc = replicate 7 ' ' in
     [heading ++ l] ++ map (spc ++) mid ++ [spc ++ end ++ " }"]
 
-showHint NoHint  = "      "
-showHint HintRDI = "(rdi) "
-showHint HintRSI = "(rsi) "
-showHint HintRAX = "(rax) "
 
-showAtom (AN z) = show z
-showAtom (AV x) = x
+showOpd :: Operand -> String
+showOpd (OL l) = showLoc l
+showOpd (ON z) = show z
 
+showLoc :: Loc -> String
+showLoc (LReg r) = showR r
+showLoc (LVar x) = x
+showLoc (LExtra i) = "extra" ++ show i
+
+showR :: R -> String
+showR r = map toLower (show r)
+
+showConfigs :: [CallConfig] -> String
+showConfigs [] = ""
+showConfigs cs = "(" ++ concat (intersperse "," (map showConfig cs)) ++ ")" 
+
+showConfig :: CallConfig -> String
+showConfig (C1 r l) = showR r ++ " ← " ++ showLoc l
+showConfig (C2 l) = "push(" ++ showLoc l ++ ")"
+
+
+{-
 
 ppAsm :: AsmBuilder -> String
 ppAsm (AsmBuilder f) = unlines $ map g (f []) where
@@ -316,38 +419,7 @@ showA a = f a where
   f (SYM name) = name
   f (Brack a) = "[" ++ showA a ++ "]"
   f (Brack2 a b) = "[" ++ showA a ++ " + " ++ showA b ++ "]"
-
-
-
-
-{-
-
-example e
-  b ? f(1, 2) : 11
-
-example stack IR
-     push b
-     if _ { (rdi) push 1
-            (rsi) push 2
-            (rax) call2 f }
-     else {       push 11 }
-
-example asm
-  mov r15 [b]
-  cmp r15 0
-  jz .l1
-  mov r15 1
-  mov r14 2
-  mov rdi r15
-  mov rsi r14
-  call f
-  jmp .l2
-  .l1
-  mov rax 11
-  .l2
-
 -}
-
 
 
 
@@ -364,7 +436,7 @@ primaryParser :: Parser E
 primaryParser = do
   h <- varParser <|> numParser <|> parensParser
   suffixes <- many primaryEtc
-  return (foldl (.) id suffixes h)
+  return (foldl (flip ($)) h suffixes)
 
 primaryEtc :: Parser (E -> E)
 primaryEtc = do
@@ -373,11 +445,20 @@ primaryEtc = do
   char ',' >> space
   y <- anyExprParser
   char ')' >> space
-  return (\e -> ECall e x y)
+  return (\e -> ECall e [x,y])
+
+binopChainParser :: Parser E
+binopChainParser = do
+  e1 <- primaryParser
+  suffixes <- many $ do
+    char '/' >> space
+    denom <- anyExprParser
+    return (\e -> EQuo e denom)
+  return (foldl (flip ($)) e1 suffixes)
 
 condParser :: Parser E
 condParser = do
-  e1 <- primaryParser
+  e1 <- binopChainParser
   mquestion <- optional (char '?')
   space
   case mquestion of
@@ -409,3 +490,138 @@ parensParser = do
   e <- anyExprParser
   char ')' >> space
   return e
+
+
+
+
+-- argument expression resequencing
+
+data Clobbers =
+  ClobbersEverything |
+  ClobbersRDX |
+  ClobbersNothing
+    deriving (Eq,Ord,Show)
+
+data ArgEx = ArgEx
+  { aeIx   :: Int
+  , aeEx   :: E
+  , aeHome :: R -- nominal destination for this arg
+  , aeDst  :: Maybe R -- destination override, home or nothing
+  }
+
+data ArgData = ArgData
+  { adHome :: R
+  , adLoc  :: Loc
+  , adCode :: [IRIns] }
+
+sequenceArgs :: [E] -> [ArgEx]
+sequenceArgs ps = 
+  let nps   = zipWith (,) [1..] ps
+      ces   = sequenceCEs nps
+      crdxs = sequenceCRDXs nps
+      cns   = sequenceNeutrals nps
+  in ces ++ crdxs ++ cns
+
+isHome :: ArgData -> Bool
+isHome ArgData{ adHome = r1, adLoc = LReg r2 } = r1 == r2
+isHome _                                       = False
+
+clobbersWhat :: E -> Clobbers
+clobbersWhat e = f e where
+  f (ECall _ _) = ClobbersEverything
+  f (EQuo e1 e2) = minimum [f e1, f e2, ClobbersRDX]
+  f (ECond e1 e2 e3) = minimum [f e1, f e2, f e3]
+  f _ = ClobbersNothing
+
+doesClobberEverything :: E -> Bool
+doesClobberEverything e = case clobbersWhat e of
+  ClobbersEverything -> True
+  _ -> False
+
+doesClobberRDX :: E -> Bool
+doesClobberRDX e = case clobbersWhat e of
+  ClobbersRDX -> True
+  _ -> False
+
+doesn'tClobberAnything :: E -> Bool
+doesn'tClobberAnything e = case clobbersWhat e of
+  ClobbersNothing -> True
+  _ -> False
+
+sequenceCEs :: [(Int,E)] -> [ArgEx]
+sequenceCEs es =
+  let es' = filter (doesClobberEverything . snd) es
+      eraserLen = length es' - 1
+      es'1 = take eraserLen es'
+      es'2 = drop eraserLen es'
+      f (i,e) = ArgEx i e (callreg i) Nothing
+      g (i,e) = ArgEx i e (callreg i) (Just (callreg i))
+  in map f es'1 ++ map g es'2
+
+sequenceCRDXs :: [(Int,E)] -> [ArgEx]
+sequenceCRDXs es = 
+  let es' = filter (doesClobberRDX . snd) es
+      g (i,e) = ArgEx i e (callreg i) (Just (callreg i))
+      weight ArgEx{ aeIx=3 } = 5
+      weight _               = 4
+  in sortBy (comparing weight) (map g es')
+
+sequenceNeutrals :: [(Int,E)] -> [ArgEx]
+sequenceNeutrals es =
+  let es'     = filter (doesn'tClobberAnything . snd) es
+      g (i,e) = ArgEx i e (callreg i) (Just (callreg i))
+  in map g es'
+
+callreg :: Int -> R
+callreg n = f n where
+  f 1 = RDI
+  f 2 = RSI
+  f 3 = RDX
+  f 4 = RCX
+  f 5 = R8
+  f 6 = R9
+  f _ = error ("callreg " ++ show n)
+
+{-
+data Asm =
+  CMP A A |
+  MOV A A |
+  JMP String |
+  JZ String |
+  IDIV A |
+  CALL A
+    deriving Show
+
+data A =
+  RAX | RBX | RCX | RDX |
+  RDI | RSI | RBP | RSP |
+  R8  | R9  | R10 | R11 |
+  R12 | R13 | R14 | R15 |
+  IMM Int | SYM String | Brack A | Brack2 A A
+    deriving (Eq,Ord,Show)
+
+data Location =
+  InRegister A |
+  InExtra Int |
+  OnStack Int |
+  Global String
+    deriving (Eq,Ord,Show)
+
+newtype AsmBuilder = AsmBuilder { buildAsm :: [Either String Asm] -> [Either String Asm] }
+
+instance Show AsmBuilder where
+  show (AsmBuilder f) = show (f [])
+
+asm :: Asm -> AsmBuilder
+asm a = AsmBuilder (\rest -> Right a : rest)
+
+label :: String -> AsmBuilder
+label l = AsmBuilder (\rest -> Left l : rest)
+
+instance Semigroup AsmBuilder where
+  AsmBuilder g <> AsmBuilder f = AsmBuilder (g . f)
+
+instance Monoid AsmBuilder where
+  mempty = AsmBuilder id
+-}
+
