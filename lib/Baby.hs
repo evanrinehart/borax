@@ -76,6 +76,7 @@ data IRIns =
   Stab0 Loc Operand |
   Stab1 Loc String Operand |
   Stab2 Loc R String Operand |
+  Stab2R Loc Operand String R |
   StabCall Loc Int Operand [CallConfig] |
   StabVarAddr Loc String
     deriving (Show)
@@ -104,7 +105,7 @@ temp = state (\(l:ls) -> (l, ls))
 baby :: String -> IO ()
 baby str = do
   let code = evalState (ir RAX (parseE str)) allTheTemps
-  putStrLn (ppIR code)
+  putStr (ppIR code) -- has its own endline
 
 ir :: R -> E -> IRGen [IRIns]
 ir dst (EK k)   = return [LReg dst `Stab0` OK k]
@@ -189,11 +190,26 @@ ir dst (EAssign e1 e2) = do
   forget 1
   return (bs ++ as ++ [Stab0 (LMem (MF2 dst)) (OL t), Stab0 (LReg dst) (OL t)])
 
-ir dst (EAssignOp binop e1 e2) = error "eassignop"
+ir dst (EAssignOp BDiv e1 e2) = error "=/"
+ir dst (EAssignOp BMod e1 e2) = error "=%"
+ir dst (EAssignOp binop e1 e2) = do
+  (t, bs) <- uir e2
+  as <- irlv dst e1
+  -- r11 <- t
+  -- *d <- *d op r11
+  --  d <- t
+  forget 1
+  return $
+    bs ++
+    as ++
+    [Stab0 (LReg R11) (OL t)] ++
+    [Stab2R (LMem (MF2 dst)) (OStar dst) (binopKeyword binop) R11] ++
+    [Stab0 (LReg dst) (OL (LReg R11))]
+  
 
-ir dst (EPFix "--_" e1) = irpre dst "--" e1
+ir dst (EPFix "--_" e1) = irpre  dst "--" e1
 ir dst (EPFix "_--" e1) = irpost dst "--" e1
-ir dst (EPFix "++_" e1) = irpre dst "++" e1
+ir dst (EPFix "++_" e1) = irpre  dst "++" e1
 ir dst (EPFix "_++" e1) = irpost dst "++" e1
 
 
@@ -436,6 +452,8 @@ ppIR ins = unlines $ concatMap g ins where
   g (Stab1 d code opd) = [concat [showLoc d, " ← ", code, " ", showOpd opd]]
   g (Stab2 d r code opd) =
     [concat [showLoc d, " ← ", showR r, " ", code, " ", showOpd opd]]
+  g (Stab2R d opd code r) =
+    [concat [showLoc d, " ← ", showOpd opd, " ", code, " ", showR r]]
   g (StabCall d n fun configs) =
     [concat [showLoc d, " ← call", show n, " ", showOpd fun, showConfigs configs]]
   g (StabVarAddr d name) = [concat [showLoc d, " ← ", "&", name]]
@@ -694,7 +712,7 @@ assignChain = chainr1 ternaries assignmentOp
 
 ternaries :: Parser E
 ternaries = do
-  a <- bitOrChain 
+  a <- bitOrChain
   questionMaybe <- optional (char '?')
   remspace
   case questionMaybe of
@@ -717,8 +735,8 @@ bitAndChain = chainl1 equalityChain op where
 equalityChain :: Parser E
 equalityChain = chainl1 relationalChain op where
   op =
-    wrapbin BEq  <$ (string "==" >> remspace) <|>
-    wrapbin BNeq <$ (string "!=" >> remspace)
+    wrapbin BNeq <$ (string "!=" >> remspace) <|>
+    wrapbin BEq  <$ try (string "==" >> notFollowedBy (char '=') >> remspace)
 
 relationalChain :: Parser E
 relationalChain = chainl1 shiftChain op where
@@ -826,7 +844,7 @@ multOp =
 
 additiveOp :: Parser (E -> E -> E)
 additiveOp = 
-  wrapbin BAdd  <$ (char '+' >> remspace) <|>
+  wrapbin BAdd <$ (char '+' >> remspace) <|>
   wrapbin BSub <$ (char '-' >> remspace)
 
 shiftOp :: Parser (E -> E -> E)
@@ -888,21 +906,27 @@ remspace1 = do
 
 binaryOp :: Parser Binop
 binaryOp =
-  BOr  <$ char '|' <|>
-  BAnd <$ char '&' <|>
-  BEq  <$ string "==" <|>
   BNeq <$ string "!=" <|>
-  BLt  <$ char '<' <|>
-  BLte <$ string "<=" <|>
-  BGt  <$ char '>' <|>
-  BGte <$ string ">=" <|>
+  snowflakeEq <|>
   BShl <$ string "<<" <|>
   BShr <$ string ">>" <|>
+  BLte <$ string "<=" <|>
+  BGte <$ string ">=" <|>
+  BLt  <$ char '<' <|>
+  BGt  <$ char '>' <|>
+  BOr  <$ char '|' <|>
+  BAnd <$ char '&' <|>
   BAdd <$ char '+' <|>
   BSub <$ char '-' <|>
   BMod <$ char '%' <|>
   BMul <$ char '*' <|>
   BDiv <$ char '/'
+
+snowflakeEq :: Parser Binop
+snowflakeEq = do
+  string "=="
+  notFollowedBy (char '=')
+  return BEq
 
 constant :: Parser K
 constant =
