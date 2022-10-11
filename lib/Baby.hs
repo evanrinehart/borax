@@ -27,14 +27,14 @@ data K =
     deriving (Eq,Show)
 
 data E =
-  EK K |
-  EVar String |
-  ECond E E E |
-  ECall E [E] |
-  EUn  Unop  E |
+  EK K | --
+  EVar String | --
+  ECond E E E | --
+  ECall E [E] | --
+  EUn  Unop  E | 
   EBin Binop E E |
-  EAssignOp Binop E E |
   EAssign E E |
+  EAssignOp Binop E E |
   EPFix String E |
   EAmp E |
   EStar E |
@@ -56,10 +56,13 @@ data R =
   R12 | R13 | R14 | R15
     deriving (Eq,Ord,Show)
 
-data Loc = LReg R | LExtra Int | LVar String
+data Loc = LReg R | LExtra Int | LVar String | LMem MemForm
   deriving (Eq,Show)
 
-data Operand = OK K | OL Loc
+data Operand = OK K | OL Loc | OStar R
+  deriving (Eq,Show)
+
+data MemForm = MF1 K | MF2 R | MF3 R K
   deriving (Eq,Show)
 
 data CallConfig = C1 R Loc | C2 Loc
@@ -72,9 +75,9 @@ data IRIns =
   StabCmp (Maybe Loc) R Operand |
   Stab0 Loc Operand |
   Stab1 Loc String Operand |
+  Stab2 Loc R String Operand |
   StabCall Loc Int Operand [CallConfig] |
-  StabVarAddr Loc String |
-  Stab2 Loc R String Operand
+  StabVarAddr Loc String
     deriving (Show)
 
 type IRGen a = State [Loc] a
@@ -108,11 +111,12 @@ ir dst (EK k)   = return [LReg dst `Stab0` OK k]
 ir dst (EVar x) = return [LReg dst `Stab0` OL (LVar x)]
 ir dst (EAmp (EVar x)) = return [LReg dst `StabVarAddr` x]
 ir dst (EAmp (EStar e1)) = ir dst e1
-ir dst (EBin BDiv e1 e2) = irdiv BDiv dst e1 e2
-ir dst (EBin BMod e1 e2) = irdiv BMod dst e1 e2
+ir dst (EAmp (EVect e1 e2)) = ir dst (EAmp (EStar (EBin BAdd e1 e2)))
+ir dst (EAmp _) = error "ir: sorry, no address"
+
 ir dst (EUn unop e1) = do
   as <- ir dst e1
-  return [(LReg dst `Stab1` unopKeyword unop) (OL (LReg dst))]
+  return $ as ++ [Stab1 (LReg dst) (unopKeyword unop) (OL (LReg dst))]
 
 ir dst (ECond e1 e2 e3) = do
   (comparison, code) <- ircmp e1
@@ -158,22 +162,51 @@ ir dst (ECall e es) = do
     [ headCode
     , stackArgsCode
     , regArgsCode
-    , [(LReg dst `StabCall` length es) (OL fun) callConfigs ]]
-ir dst (EBin BShr e1 e2) = do
-  -- in a non commutative binop we need to keep the order
-  -- still, better to evaluate the deeper side first
-  (loc, bs) <- uir e2
-  as <- ir dst e1
-  forget 1
-  return (bs ++ as ++ [(LReg dst `Stab2` dst) ">>" (OL loc)])
-ir dst (EBin BAdd e1 e2) = do
-  -- better to evaluate the deeper side first.
-  -- since + is commutative, we can bring deeper side into operand 1
-  (loc, bs) <- uir e2
-  as <- ir dst e1
-  forget 1
-  return (bs ++ as ++ [(LReg dst `Stab2` dst) "+" (OL loc)])
+    , [StabCall (LReg dst) (length es) (OL fun) callConfigs ]]
 
+ir dst (EBin BDiv e1 e2) = irdiv BDiv dst e1 e2
+ir dst (EBin BMod e1 e2) = irdiv BMod dst e1 e2
+ir dst (EBin binop e1 (EK k)) = do
+  as <- ir dst e1
+  return $ as ++ [Stab2 (LReg dst) dst (binopKeyword binop) (OK k)]
+ir dst (EBin binop e1 e2) = do
+  (t, bs) <- uir e2
+  as <- ir dst e1
+  forget 1
+  return $ bs ++ as ++ [Stab2 (LReg dst) dst (binopKeyword binop) (OL t)]
+
+ir dst (EAssign (EVar x) (EK k)) = do
+  return [Stab0 (LReg dst) (OK k), Stab0 (LVar x) (OL (LReg dst))]
+ir dst (EAssign (EVar x) e2) = do
+  bs <- ir dst e2
+  return (bs ++ [Stab0 (LVar x) (OL (LReg dst))])
+ir dst (EAssign e1 (EK k)) = do
+  bs <- irlv dst e1
+  return (bs ++ [Stab0 (LMem (MF2 dst)) (OK k), Stab0 (LReg dst) (OK k)])
+ir dst (EAssign e1 e2) = do
+  (t, bs) <- uir e2
+  as <- irlv dst e1
+  forget 1
+  return (bs ++ as ++ [Stab0 (LMem (MF2 dst)) (OL t), Stab0 (LReg dst) (OL t)])
+
+ir dst (EAssignOp binop e1 e2) = error "eassignop"
+
+ir dst (EPFix "--_" e1) = irpre dst "--" e1
+ir dst (EPFix "_--" e1) = irpost dst "--" e1
+ir dst (EPFix "++_" e1) = irpre dst "++" e1
+ir dst (EPFix "_++" e1) = irpost dst "++" e1
+
+
+ir dst (EStar (EK k)) = do
+  return [Stab0 (LReg dst) (OL (LMem (MF1 k)))]
+ir dst (EStar (EBin BAdd e1 (EK k))) = do
+  as <- ir dst e1
+  return $ as ++ [Stab0 (LReg dst) (OL (LMem (MF3 dst k)))]
+ir dst (EStar (EBin BAdd (EK k) e2)) = ir dst (EStar (EBin BAdd e2 (EK k)))
+ir dst (EStar e1) = do
+  as <- ir dst e1
+  return (as ++ [Stab0 (LReg dst) (OStar dst)])
+ir dst (EVect e1 e2) = ir dst (EStar (EBin BAdd e1 e2))
 
 uir :: E -> IRGen (Loc, [IRIns])
 uir e = do
@@ -183,8 +216,8 @@ uir e = do
       outs <- ir dst e
       return (loc, outs)
     LExtra i -> do
-      outs <- ir RBX e
-      return (loc, outs ++ [loc `Stab0` OL (LReg RBX)])
+      outs <- ir R11 e
+      return (loc, outs ++ [loc `Stab0` OL (LReg R11)])
 
 -- generate code to do a comparison in context of a conditional
 -- i.e. we don't need the actual result, only flags
@@ -204,6 +237,29 @@ irdiv op dst e1 e2 = do
   as <- ir RAX e1
   forget 1
   return (bs ++ as ++ [(LReg dst `Stab2` RAX) (binopKeyword op) (OL loc)])
+
+irpre dst plusOrMinus e1 = do
+  as <- irlv dst e1
+  return $ as ++
+    [Stab1 (LMem (MF2 dst)) (pfixKeyword plusOrMinus) (OStar dst)
+    ,Stab0 (LReg dst) (OStar dst)]
+irpost dst plusOrMinus e1 = do
+  as <- irlv dst e1
+  return $ as ++
+    [Stab0 (LReg R11) (OStar dst)
+    ,Stab1 (LMem (MF2 dst)) (pfixKeyword plusOrMinus) (OStar dst)
+    ,Stab0 (LReg dst) (OL (LReg R11))]
+
+pfixKeyword "++" = "increment"
+pfixKeyword "--" = "decrement"
+  
+
+-- compute the lvalue of an lvalue expression into a register.
+irlv :: R -> E -> IRGen [IRIns]
+irlv dst (EVar x) = return [StabVarAddr (LReg dst) x]
+irlv dst (EStar e1) = ir dst e1
+irlv dst (EVect e1 e2) = ir dst (EBin BAdd e1 e2)
+irlv dst _ = error "sorry, no lvalue"
 
 {-
 
@@ -390,23 +446,27 @@ ppIR ins = unlines $ concatMap g ins where
   f heading (l:ls) =
     let end = last ls in
     let mid = init ls in
-    let spc = replicate 7 ' ' in
+    let spc = replicate (length heading) ' ' in
     [heading ++ l] ++ map (spc ++) mid ++ [spc ++ end ++ " }"]
 
 showK :: K -> String
 showK (KN z)     = show z
-showK (KC c)     = Expr.encodeC c
+showK (KC c)     = Expr.showWideChar [c]
 showK (KCS cs)   = Expr.showWideChar cs
-showK (KStr str) = str
+showK (KStr str) = show str
 
 showOpd :: Operand -> String
 showOpd (OL l) = showLoc l
 showOpd (OK k) = showK k
+showOpd (OStar r) = "*" ++ showR r
 
 showLoc :: Loc -> String
 showLoc (LReg r) = showR r
 showLoc (LVar x) = x
 showLoc (LExtra i) = "extra" ++ show i
+showLoc (LMem (MF2 r)) = "*" ++ showR r
+showLoc (LMem (MF1 k)) = "*" ++ showK k
+showLoc (LMem (MF3 r k)) = "*(" ++ showR r ++ " + " ++ showK k ++ ")"
 
 showR :: R -> String
 showR r = map toLower (show r)
@@ -640,10 +700,10 @@ ternaries = do
   case questionMaybe of
     Nothing -> return a
     Just _ -> do
-      b <- ternaries
+      b <- anyExpr
       char ':'
       remspace
-      c <- ternaries
+      c <- anyExpr
       return (ECond a b c)
 
 bitOrChain :: Parser E
@@ -663,10 +723,10 @@ equalityChain = chainl1 relationalChain op where
 relationalChain :: Parser E
 relationalChain = chainl1 shiftChain op where
   op =
-    wrapbin BLt  <$ (char '<' >> remspace) <|>
     wrapbin BLte <$ (string "<=" >> remspace) <|>
-    wrapbin BGt  <$ (char '>' >> remspace) <|>
-    wrapbin BGte <$ (string ">=" >> remspace)
+    wrapbin BLt  <$ (   char '<' >> remspace) <|>
+    wrapbin BGte <$ (string ">=" >> remspace) <|>
+    wrapbin BGt  <$ (   char '>' >> remspace)
 
 shiftChain :: Parser E
 shiftChain = chainl1 additiveChain shiftOp
@@ -738,12 +798,12 @@ primaryEtc2 = do
 prefixOp :: Parser (E -> E)
 prefixOp =
   wrapunary Bang <$ (char '!' >> remspace) <|>
-  wrapunary Minus <$ (char '-' >> remspace) <|>
   wrapunary Tilde <$ (char '~' >> remspace) <|>
   starE <$ (char '*' >> remspace) <|>
   ampE  <$ (char '&' >> remspace) <|>
   plusPlusE   <$ (string "++" >> remspace) <|>
-  minusMinusE <$ (string "--" >> remspace)
+  minusMinusE <$ (string "--" >> remspace) <|>
+  wrapunary Minus <$ (char '-' >> remspace)
 
 postfixOp :: Parser (E -> E)
 postfixOp =
@@ -828,13 +888,13 @@ remspace1 = do
 
 binaryOp :: Parser Binop
 binaryOp =
-  BOr <$ char '|' <|>
+  BOr  <$ char '|' <|>
   BAnd <$ char '&' <|>
-  BEq <$ string "==" <|>
+  BEq  <$ string "==" <|>
   BNeq <$ string "!=" <|>
-  BLt <$ char '<' <|>
+  BLt  <$ char '<' <|>
   BLte <$ string "<=" <|>
-  BGt <$ char '>' <|>
+  BGt  <$ char '>' <|>
   BGte <$ string ">=" <|>
   BShl <$ string "<<" <|>
   BShr <$ string ">>" <|>
