@@ -77,6 +77,7 @@ data IRIns =
   Stab1 Loc String Operand |
   Stab2 Loc R String Operand |
   Stab2R Loc Operand String R |
+  Stab2K Loc Operand String K |
   StabCall Loc Int Operand [CallConfig] |
   StabVarAddr Loc String
     deriving (Show)
@@ -165,11 +166,26 @@ ir dst (ECall e es) = do
     , regArgsCode
     , [StabCall (LReg dst) (length es) (OL fun) callConfigs ]]
 
+ir dst (EBin BDiv e1 (EK k)) = irdivk BDiv dst e1 (OK k)
+ir dst (EBin BMod e1 (EK k)) = irdivk BMod dst e1 (OK k)
+ir dst (EBin BDiv e1 (EVar x)) = irdivk BDiv dst e1 (OL (LVar x))
+ir dst (EBin BMod e1 (EVar x)) = irdivk BMod dst e1 (OL (LVar x))
 ir dst (EBin BDiv e1 e2) = irdiv BDiv dst e1 e2
 ir dst (EBin BMod e1 e2) = irdiv BMod dst e1 e2
 ir dst (EBin binop e1 (EK k)) = do
   as <- ir dst e1
   return $ as ++ [Stab2 (LReg dst) dst (binopKeyword binop) (OK k)]
+ir dst (EBin BAdd (EK k) e2) = ir dst (EBin BAdd e2 (EK k))
+ir dst (EBin BMul (EK k) e2) = ir dst (EBin BMul e2 (EK k))
+ir dst (EBin BAnd (EK k) e2) = ir dst (EBin BAnd e2 (EK k))
+ir dst (EBin BOr  (EK k) e2) = ir dst (EBin BOr  e2 (EK k))
+ir dst (EBin BXor (EK k) e2) = ir dst (EBin BXor e2 (EK k))
+ir dst (EBin BNeq (EK k) e2) = ir dst (EBin BNeq e2 (EK k))
+ir dst (EBin BEq  (EK k) e2) = ir dst (EBin BEq  e2 (EK k))
+ir dst (EBin BLt  (EK k) e2) = ir dst (EBin BGt  e2 (EK k))
+ir dst (EBin BGt  (EK k) e2) = ir dst (EBin BLt  e2 (EK k))
+ir dst (EBin BLte (EK k) e2) = ir dst (EBin BGte e2 (EK k))
+ir dst (EBin BGte (EK k) e2) = ir dst (EBin BLte e2 (EK k))
 ir dst (EBin binop e1 e2) = do
   (t, bs) <- uir e2
   as <- ir dst e1
@@ -190,8 +206,17 @@ ir dst (EAssign e1 e2) = do
   forget 1
   return (bs ++ as ++ [Stab0 (LMem (MF2 dst)) (OL t), Stab0 (LReg dst) (OL t)])
 
-ir dst (EAssignOp BDiv e1 e2) = error "=/"
-ir dst (EAssignOp BMod e1 e2) = error "=%"
+ir dst (EAssignOp BDiv (EVar x) e2) = ireqdivx BDiv dst x e2
+ir dst (EAssignOp BMod (EVar x) e2) = ireqdivx BMod dst x e2
+ir dst (EAssignOp BDiv e1 (EK k)) = ireqdivk BDiv dst e1 (OK k)
+ir dst (EAssignOp BMod e1 (EK k)) = ireqdivk BMod dst e1 (OK k)
+ir dst (EAssignOp BDiv e1 e2) = ireqdiv BDiv dst e1 e2
+ir dst (EAssignOp BMod e1 e2) = ireqdiv BMod dst e1 e2
+ir dst (EAssignOp binop (EVar x) (EK k)) = do
+  return [Stab2K (LVar x) (OL (LVar x)) (binopKeyword binop) k]
+ir dst (EAssignOp binop (EVar x) e2) = do
+    bs <- ir dst e2
+    return $ bs ++ [Stab2R (LVar x) (OL (LVar x)) (binopKeyword binop) dst]
 ir dst (EAssignOp binop e1 e2) = do
   (t, bs) <- uir e2
   as <- irlv dst e1
@@ -235,6 +260,11 @@ uir e = do
       outs <- ir R11 e
       return (loc, outs ++ [loc `Stab0` OL (LReg R11)])
 
+getSimpleOperand :: E -> Maybe Operand
+getSimpleOperand (EK k)   = Just (OK k)
+getSimpleOperand (EVar x) = Just (OL (LVar x))
+getSimpleOperand _        = Nothing
+
 -- generate code to do a comparison in context of a conditional
 -- i.e. we don't need the actual result, only flags
 ircmp :: E -> IRGen (Comparison, [IRIns])
@@ -252,13 +282,61 @@ irdiv op dst e1 e2 = do
   (loc, bs) <- uir e2
   as <- ir RAX e1
   forget 1
-  return (bs ++ as ++ [(LReg dst `Stab2` RAX) (binopKeyword op) (OL loc)])
+  return $ bs ++ as ++ [Stab2 (LReg dst) RAX (binopKeyword op) (OL loc)]
 
+irdivk :: Binop -> R -> E -> Operand -> IRGen [IRIns]
+irdivk op dst e1 denom = do 
+  as <- ir RAX e1
+  return $ as ++ [Stab2 (LReg dst) RAX (binopKeyword op) denom]
+
+ireqdiv :: Binop -> R -> E -> E -> IRGen [IRIns]
+ireqdiv binop dst e1 e2 = do
+  (t, bs) <- uir e2
+  as <- irlv dst e1
+  forget 1
+  return $
+    bs ++
+    as ++
+    [Stab2 (LMem (MF2 dst)) RAX (binopKeyword binop) (OL t)] ++
+    [Stab0 (LReg dst) (OL t)]
+
+ireqdivk :: Binop -> R -> E -> Operand -> IRGen [IRIns]
+ireqdivk binop dst e1 denom = do
+  as <- irlv dst e1
+  return $
+    as ++
+    [Stab0 (LReg RAX) (OL (LReg dst)) ] ++
+    [Stab2 (LMem (MF2 dst)) RAX (binopKeyword binop) denom] ++
+    [Stab0 (LReg dst) denom]
+
+ireqdivx :: Binop -> R -> String -> E -> IRGen [IRIns]
+ireqdivx binop dst x e2 = case getSimpleOperand e2 of
+  Just denom -> return $
+    [Stab0 (LReg RAX) (OL (LVar x))] ++
+    [Stab2 (LVar x) RAX (binopKeyword binop) denom] ++
+    [Stab0 (LReg dst) denom]
+  Nothing -> do
+    (t, as) <- uir e2
+    forget 1
+    return $
+      as ++
+      [Stab0 (LReg RAX) (OL (LVar x))] ++
+      [Stab2 (LVar x) RAX (binopKeyword binop) (OL t)] ++
+      [Stab0 (LReg dst) (OL t)]
+
+irpre dst plusOrMinus (EVar x) = do
+  return $
+    [Stab1 (LVar x) (pfixKeyword plusOrMinus) (OL (LVar x))
+    ,Stab0 (LReg dst) (OL (LVar x))]
 irpre dst plusOrMinus e1 = do
   as <- irlv dst e1
   return $ as ++
     [Stab1 (LMem (MF2 dst)) (pfixKeyword plusOrMinus) (OStar dst)
     ,Stab0 (LReg dst) (OStar dst)]
+irpost dst plusOrMinus (EVar x) = do
+  return $
+    [Stab0 (LReg dst) (OL (LVar x))
+    ,Stab1 (LVar x) (pfixKeyword plusOrMinus) (OL (LVar x))]
 irpost dst plusOrMinus e1 = do
   as <- irlv dst e1
   return $ as ++
@@ -454,6 +532,8 @@ ppIR ins = unlines $ concatMap g ins where
     [concat [showLoc d, " ← ", showR r, " ", code, " ", showOpd opd]]
   g (Stab2R d opd code r) =
     [concat [showLoc d, " ← ", showOpd opd, " ", code, " ", showR r]]
+  g (Stab2K d opd code k) =
+    [concat [showLoc d, " ← ", showOpd opd, " ", code, " ", showK k]]
   g (StabCall d n fun configs) =
     [concat [showLoc d, " ← call", show n, " ", showOpd fun, showConfigs configs]]
   g (StabVarAddr d name) = [concat [showLoc d, " ← ", "&", name]]
