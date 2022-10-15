@@ -82,7 +82,7 @@ data UnaryOp =
   BitComplement deriving (Show)
 
 data BinaryOp =
-  Plus | Minus | Modulo | Times | Division |
+  Plus | Minus | Modulo | Times | Quotient |
   LessThan | LessThanEquals | GreaterThan | GreaterThanEquals | Equals | NotEquals |
   BitXor | BitOr | BitAnd | ShiftL | ShiftR | LogicAnd | LogicOr
     deriving (Show)
@@ -200,7 +200,7 @@ showBinaryOp o = case o of
   Minus -> "-"
   Modulo -> "%"
   Times -> "*"
-  Division -> "/"
+  Quotient -> "/"
 
 showExpr :: Expr -> String
 showExpr = execWriter . go . unFix where
