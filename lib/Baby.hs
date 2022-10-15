@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 module Baby where
 
-import qualified Expr
 
 import Control.Monad.State
 import qualified Data.IntMap as IM; import Data.IntMap (IntMap)
@@ -16,7 +15,12 @@ import Debug.Trace
 
 import Data.Void
 import Text.Megaparsec hiding (State, label)
-import Text.Megaparsec.Char
+import Text.Megaparsec.Char hiding (newline)
+
+import qualified Expr
+import Asm hiding (K(..), showK, Operand(..), MemForm(..))
+import Doc
+
 type Parser = Parsec Void String
 
 data K =
@@ -48,13 +52,6 @@ data Binop =
   BShr | BShl | BAnd | BOr  | BXor |
   BLt  | BLte | BGt  | BGte | BEq  | BNeq
     deriving Show
-
-data R =
-  RAX | RBX | RCX | RDX |
-  RDI | RSI | RBP | RSP |
-  R8  | R9  | R10 | R11 |
-  R12 | R13 | R14 | R15
-    deriving (Eq,Ord,Show)
 
 data Loc = LReg R | LExtra Int | LVar String | LMem MemForm
   deriving (Eq,Show)
@@ -106,7 +103,7 @@ temp = state (\(l:ls) -> (l, ls))
 baby :: String -> IO ()
 baby str = do
   let code = evalState (ir RAX (parseE str)) allTheTemps
-  putStr (ppIR code) -- has its own endline
+  putStr (flatten $ ppIR code) -- has its own endline
 
 ir :: R -> E -> IRGen [IRIns]
 ir dst (EK k)   = return [LReg dst `Stab0` OK k]
@@ -357,121 +354,85 @@ irlv dst _ = error "sorry, no lvalue"
 
 
 
+ppE :: E -> Doc
 ppE (EK k) = showK k
-ppE (EVar x) = x
-ppE (ECond e1 e2 e3) = ppE e1 ++ " ? " ++ ppE e2 ++ " : " ++ ppE e3
-ppE (ECall e es) = "Call("++ppE e++")["++concat (intersperse "," (map ppE es))++"]"
+ppE (EVar x) = text x
+ppE (ECond e1 e2 e3) = ppE e1 <> text " ? " <> ppE e2 <> text " : " <> ppE e3
+ppE (ECall e es) = text "Call(" <> ppE e <> text ")[" <> showCommas (map ppE es) <> text "]"
 
 
-ppIR :: [IRIns] -> String
-ppIR ins = unlines $ concatMap g ins where
-  g :: IRIns -> [String]
+ppIR :: [IRIns] -> Doc
+ppIR ins = joinDocs newline (g =<< ins) where
+  g :: IRIns -> [Doc]
   g (IRCond c body1 body2) = 
-    let spc = replicate 6 ' '
-        ls1 = concatMap g body1 :: [String]
-        ls2 = concatMap g body2 :: [String]
+    let spc = text (replicate 6 ' ')
+        ls1 = g =<< body1 :: [Doc]
+        ls2 = g =<< body2 :: [Doc]
         h1 = "if " ++ c ++ " { "
         h2 = "else " ++ replicate (length c - 2) ' ' ++ " { "
-    in map id (f h1 ls1) ++
-       map id (f h2 ls2)
-  g (Stab0 d opd)      = [concat [showLoc d, " ← ", showOpd opd]]
-  g (Stab1 d code opd) = [concat [showLoc d, " ← ", code, " ", showOpd opd]]
+    in f h1 ls1 ++ f h2 ls2
+  g (Stab0 d opd)      = [joinDocs arrow [showLoc d, showOpd opd]]
+  g (Stab1 d code opd) = [joinDocs arrow [showLoc d, text code <> space <> showOpd opd]]
   g (Stab2 d r code opd) =
-    [concat [showLoc d, " ← ", showR r, " ", code, " ", showOpd opd]]
+    [showLoc d <> arrow <> showR r <> space <> text code <> space <> showOpd opd]
   g (Stab2R d opd code r) =
-    [concat [showLoc d, " ← ", showOpd opd, " ", code, " ", showR r]]
+    [showLoc d <> arrow <> showOpd opd <> space <> text code <> space <> showR r]
   g (Stab2K d opd code k) =
-    [concat [showLoc d, " ← ", showOpd opd, " ", code, " ", showK k]]
+    [showLoc d <> arrow <> showOpd opd <> space <> text code <> space <> showK k]
   g (StabCall d n fun configs) =
-    [concat [showLoc d, " ← call", show n, " ", showOpd fun, showConfigs configs]]
-  g (StabVarAddr d name) = [concat [showLoc d, " ← ", "&", name]]
+    [showLoc d <> arrow <> text "call" <> showN n <> space <> showOpd fun <> showConfigs configs]
+  g (StabVarAddr d name) = [showLoc d <> arrow <> amp <> text name]
   g (StabCmp md r opd) =
-    [concat [maybe "_" showLoc md, " ← cmp ", showR r, " ", showOpd opd]]
-  f :: String -> [String] -> [String]
-  f heading [l]    = [heading ++ l ++ " }"]
+    [maybe under showLoc md <> arrow <> text "cmp" <> space <> showR r <> space <> showOpd opd]
+  f :: String -> [Doc] -> [Doc]
+  f heading [l]    = [text heading <> l <> text " }"]
   f heading (l:ls) =
     let end = last ls in
     let mid = init ls in
-    let spc = replicate (length heading) ' ' in
-    [heading ++ l] ++ map (spc ++) mid ++ [spc ++ end ++ " }"]
+    let spc = text (replicate (length heading) ' ') in
+    [text heading <> l] ++ map (spc <>) mid ++ [spc <> end <> text " }"]
+  arrow = text " ← "
+  space = text " "
+  under = text "_"
+  amp = text "&"
 
-showK :: K -> String
-showK (KN z)     = show z
-showK (KC c)     = Expr.showWideChar [c]
-showK (KCS cs)   = Expr.showWideChar cs
-showK (KStr str) = show str
 
-showOpd :: Operand -> String
+showK :: K -> Doc
+showK (KN z)     = text (show z)
+showK (KC c)     = text (Expr.showWideChar [c])
+showK (KCS cs)   = text (Expr.showWideChar cs)
+showK (KStr str) = text (show str)
+
+showOpd :: Operand -> Doc
 showOpd (OL l) = showLoc l
 showOpd (OK k) = showK k
-showOpd (OStar r) = "*" ++ showR r
+showOpd (OStar r) = text "*" <> showR r
 
-showLoc :: Loc -> String
+showLoc :: Loc -> Doc
 showLoc (LReg r) = showR r
-showLoc (LVar x) = x
-showLoc (LExtra i) = "extra" ++ show i
-showLoc (LMem (MF2 r)) = "*" ++ showR r
-showLoc (LMem (MF1 k)) = "*" ++ showK k
-showLoc (LMem (MF3 r k)) = "*(" ++ showR r ++ " + " ++ showK k ++ ")"
+showLoc (LVar x) = text x
+showLoc (LExtra i) = text "extra" <> showN i
+showLoc (LMem (MF2 r)) = text "*" <> showR r
+showLoc (LMem (MF1 k)) = text "*" <> showK k
+showLoc (LMem (MF3 r k)) = text "*(" <> showR r <> text " + " <> showK k <> text ")"
 
-showR :: R -> String
-showR r = map toLower (show r)
+showConfigs :: [CallConfig] -> Doc
+showConfigs [] = nil
+showConfigs cs = text "(" <> showCommas (map showConfig cs) <> text ")" 
 
-showConfigs :: [CallConfig] -> String
-showConfigs [] = ""
-showConfigs cs = "(" ++ concat (intersperse "," (map showConfig cs)) ++ ")" 
-
-showConfig :: CallConfig -> String
-showConfig (C1 r l) = showR r ++ " ← " ++ showLoc l
-showConfig (C2 l) = "push(" ++ showLoc l ++ ")"
-
-
-{-
-
-ppAsm :: AsmBuilder -> String
-ppAsm (AsmBuilder f) = unlines $ map g (f []) where
-  g :: Either String Asm -> String
-  g (Left l) = l
-  g (Right mne) = case mne of
-    CMP x y -> "cmp " ++ showA x ++ ", " ++ showA y
-    MOV x y -> "mov " ++ showA x ++ ", " ++ showA y
-    JMP l -> "jmp " ++ l
-    JZ l -> "jz " ++ l
-    CALL x -> "call " ++ showA x
-
-showA :: A -> String
-showA a = f a where
-  f RAX = "rax"
-  f RBX = "rbx"
-  f RCX = "rcx"
-  f RDX = "rdx"
-  f RDI = "rdi"
-  f RSI = "rsi"
-  f RBP = "rbp"
-  f RSP = "rsp"
-  f R8  = "r8"
-  f R9  = "r9"
-  f R10 = "r10"
-  f R11 = "r11"
-  f R12 = "r12"
-  f R13 = "r13"
-  f R14 = "r14"
-  f R15 = "r15"
-  f (IMM z) = show z
-  f (SYM name) = name
-  f (Brack a) = "[" ++ showA a ++ "]"
-  f (Brack2 a b) = "[" ++ showA a ++ " + " ++ showA b ++ "]"
--}
+showConfig :: CallConfig -> Doc
+showConfig (C1 r l) = showR r <> text " ← " <> showLoc l
+showConfig (C2 l) = text "push(" <> showLoc l <> text ")"
 
 
 
+
+-- | Expr parser
 
 parseE :: String -> E
 parseE str = case runParser (space >> anyExpr) "unknown" str of
   Left eb -> error (show eb)
   Right e -> e
-
-
 
 
 unopKeyword :: Unop -> String

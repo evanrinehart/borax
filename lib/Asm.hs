@@ -2,6 +2,8 @@ module Asm where
 
 import Data.Char (toLower)
 
+import Doc
+
 -- | Lines of code in an asm file
 data CodeLine =
   Directive String |
@@ -51,7 +53,7 @@ data R =
   RDI | RSI | RBP | RSP |
   R8  | R9  | R10 | R11 |
   R12 | R13 | R14 | R15
-    deriving Show
+    deriving (Eq, Show)
 
 data R8bit = AL | BL | CL | DL
   deriving Show
@@ -89,7 +91,7 @@ showAsmF sh = f where
   f (CALL x)  = g "call" [x]
 
 showAsm :: (a -> Doc) -> String -> [a] -> Doc
-showAsm sh mnemonic os = showIndent mnemonic (showCommas (map sh os))
+showAsm sh mnemonic os = showIndent mnemonic (showCommasSpace (map sh os))
 
 showData :: String -> [D] -> Doc
 showData ty dats = showIndent ty (showCommas (map showD dats))
@@ -118,67 +120,10 @@ showMemForm m = text "[" <> showSum (f m) <> text "]" where
   f (M10 name n)     = [text name, showN n]
   f (M11 name r s n) = [text name, showScale r s, showN n]
 
-showN :: Int -> Doc
-showN = text . show
-
-showSum :: [Doc] -> Doc
-showSum = joinDocs (text " + ")
-
-showScale :: R -> Int -> Doc
-showScale r s = showR r <> text "*" <> showN s
-
 showD :: D -> Doc
 showD (DN n)  = text (show n)
 showD (DC cs) = text "'" <> text cs <> text "'"
 
-showCommas :: [Doc] -> Doc
-showCommas = joinDocs (text ", ")
+showScale :: R -> Int -> Doc
+showScale r s = showR r <> text "*" <> showN s
 
-showIndent :: String -> Doc -> Doc
-showIndent header body =
-  let alignSpace = replicate (max 1 (8 - length header)) ' '
-  in text header <> text alignSpace <> body
-
-joinDocs :: Doc -> [Doc] -> Doc
-joinDocs sep []     = nil
-joinDocs sep [d]    = d
-joinDocs sep (d:ds) = d <> sep <> joinDocs sep ds
-
-
-
-
-
--- | document type for asm output
-
-data Doc =
-  Nil |
-  Newline |
-  Tab |
-  Text String |
-  Doc :<> Doc
-
-flatten :: Doc -> String
-flatten d = f d "" where
-  f Nil rest         = rest
-  f Newline rest     = '\n' : rest
-  f Tab rest         = '\t' : rest
-  f (Text str) rest  = str ++ rest
-  f (d1 :<> d2) rest = f d1 (f d2 rest)
-
-nil :: Doc
-nil = Nil
-
-newline :: Doc
-newline = Newline
-
-tab :: Doc
-tab = Tab
-
-text :: String -> Doc
-text = Text
-
-instance Semigroup Doc where
-  (<>) = (:<>)
-
-instance Monoid Doc where
-  mempty = nil
