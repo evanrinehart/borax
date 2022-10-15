@@ -353,7 +353,7 @@ arith2 binop val1 val2 = case binop of
   Minus -> val1 - val2
   Modulo -> val1 `mod` val2
   Times -> val1 * val2
-  Division -> val1 `div` val2
+  Quotient -> val1 `div` val2
 
 
 {-The binary operators << and >> are left and right shift respec-
