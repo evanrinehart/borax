@@ -1,177 +1,184 @@
 module Asm where
 
-import Data.List
-import Data.Char
+import Data.Char (toLower)
 
-data Reg =
+-- | Lines of code in an asm file
+data CodeLine =
+  Directive String |
+  Blank |
+  Label String |
+  Code Asm |
+  Data String [D]
+
+type Asm = AsmF Operand
+
+-- | Skeleton for assembly language code.
+data AsmF a =
+  MOV a a |
+  LEA a a |
+  JMP a |
+  JCC String a |
+  SETCC String R8bit |
+  TEST a |
+  CMP a a |
+  CQO |
+  PUSH a |
+  POP a |
+  CALL a |
+  RET |
+
+  ADD a a |
+  SUB a a |
+  IMUL a a |
+  IDIV a a |
+  INC a |
+  DEC a |
+  SHL a |
+  SHR a |
+  NOT a |
+  AND a a |
+  OR a a |
+  XOR a a |
+  NEG a
+  
+
+data Operand = OpK K | OpR R | OpY String | OpM MemForm
+
+data K = KN Int | KC Char
+
+data R =
   RAX | RBX | RCX | RDX |
   RDI | RSI | RBP | RSP |
   R8  | R9  | R10 | R11 |
   R12 | R13 | R14 | R15
     deriving Show
 
-data RawOperand =
-  RawR Reg |
-  RawI Int |
-  RawG String |
-  RawS Int |
-  RawF |
-  RawV1 Reg Int |
-  RawV2 Reg Reg Int
+data R8bit = AL | BL | CL | DL
   deriving Show
 
--- finalish form :: ThreeCode RawOperand
--- before that   :: ThreeCode (Either Int RawOperand)
+-- | This form is used for memory access operands
+data MemForm =
+  M00 Int |
+  M01 R Int Int |
+  M10 String Int |
+  M11 String R Int Int
 
-showRawOperand :: RawOperand -> String
-showRawOperand (RawR reg)        = showReg reg
-showRawOperand (RawI i)          = show i
-showRawOperand (RawG name)       = name
-showRawOperand RawF              = "(flags)"
-showRawOperand (RawS off)        = "s[" ++ show off ++ "]"
-showRawOperand (RawV1 r off)     = concat [showReg r, "[", show off, "]"]
-showRawOperand (RawV2 r1 r2 off) =
-  concat [showReg r1, "[", showReg r1, "*8 + ", show (off * 8), "]"]
-
-showRawOperandOr :: Either Int RawOperand -> String
-showRawOperandOr (Left  n)   = "v" ++ show n
-showRawOperandOr (Right raw) = showRawOperand raw
-
-data MemHat a = Star a | Amp a | Bare a
-  deriving Show
-
-showMemHat :: (a -> String) -> MemHat a -> String
-showMemHat sh (Star x) = '*' : sh x
-showMemHat sh (Amp x)  = '&' : sh x
-showMemHat sh (Bare x) =       sh x
-
-showReg :: Reg -> String
-showReg = map toLower . show
+data D = DN Int | DC String
 
 
-data Ins a =
-  Neutral a |
-  Plus a a |
-  Minus a a |
-  Times a a |
-  Divide a a |
-  Compare a a |
-  Negate a |
-  SignExtension a |
-  JumpLess String |
-  JumpEqual String |
-  JumpNotEqual String |
-  Jump String |
-  Call a [a] |
-  Increment a |
-  Decrement a |
-  Push a |
-  Pop a |
-  Return
-    deriving Show
+-- | Pretty print functions for output [CodeLine]
 
-data StabLeft a =
-  SL0 (Ins a) |
-  SL1 a (Ins a) |
-  SL2 a a (Ins a)
-    deriving Show
+showCodeLines :: [CodeLine] -> Doc
+showCodeLines = f where
+  f (Blank : more)         = newline <> f more
+  f (Label str : more)     = text str <> text ":" <> newline <> f more
+  f (Code asm : more)      = tab <> showAsmF showOperand asm <> newline <> f more
+  f (Data ty dats : more)  = tab <> showData ty dats <> newline <> f more
+  f (Directive str : more) = tab <> text str <> newline <> f more
+  f []                     = nil
 
-type VarOperand = Either Int RawOperand
+showAsmF :: (a -> Doc) -> AsmF a -> Doc
+showAsmF sh = f where
+  g = showAsm sh
+  f (MOV x y) = g "mov" [x, y]
+  f (LEA x y) = g "lea" [x, y]
+  f (JMP x)   = g "jmp" [x]
+  f (JCC cc x) = g ("j" ++ cc) [x]
+  f (SETCC cc x) = showAsm showR8bit ("set" ++ cc) [x]
+  f (CMP x y) = g "cmp" [x, y]
+  f (CALL x)  = g "call" [x]
 
-type Asm1 = StabLeft (MemHat RawOperand)
-type Asm2 = StabLeft (MemHat VarOperand)
+showAsm :: (a -> Doc) -> String -> [a] -> Doc
+showAsm sh mnemonic os = showIndent mnemonic (showCommas (map sh os))
 
-showAsm1 = showSL (showMemHat showRawOperand)
-showAsm2 = showSL (showMemHat showRawOperandOr)
+showData :: String -> [D] -> Doc
+showData ty dats = showIndent ty (showCommas (map showD dats))
 
-data Annot a = Annot
-  { annLabel   :: String
-  , annBody    :: a
-  , annComment :: String }
-      deriving Show
+showOperand :: Operand -> Doc
+showOperand = f where
+  f (OpK k) = showK k
+  f (OpR r) = showR r
+  f (OpY s) = text s
+  f (OpM m) = showMemForm m
 
-showIns :: (a -> String) -> Ins a -> String
-showIns sh (Neutral x) = sh x
-showIns sh (Plus x y) = sh x ++ " + " ++ sh y
-showIns sh (Minus x y) = sh x ++ " - " ++ sh y
-showIns sh (Times x y) = sh x ++ " * " ++ sh y
-showIns sh (Divide x y) = sh x ++ " div " ++ sh y
-showIns sh (Compare x y) = sh x ++ " cmp " ++ sh y
-showIns sh (Negate x) = "neg " ++ sh x
-showIns sh (JumpLess label) = "jl " ++ label
-showIns sh (JumpEqual label) = "je " ++ label
-showIns sh (JumpNotEqual label) = "jne " ++ label
-showIns sh (Jump label) = "jmp " ++ label
-showIns sh (Call x xs) = "call " ++ sh x ++ "(" ++ guts ++ ")" where
-  guts = concat (intersperse ", " (map sh xs))
-showIns sh (Increment x) = sh x ++ "++"
-showIns sh (Decrement x) = sh x ++ "--"
-showIns sh (Push x) = "push " ++ sh x
-showIns sh (Pop x) = "pop " ++ sh x
-showIns sh Return = "return"
+showK :: K -> Doc
+showK (KN n) = text (show n)
+showK (KC c) = text (show c)
 
-showSL :: (a -> String) -> StabLeft a -> String
-showSL sh (SL0 op) =
-  let pad0 = replicate (8 + length " <- ") ' '
-  in pad0 ++ showIns sh op
-showSL sh (SL1 dst op) =
-  let part0 = sh dst
-      pad0 = replicate (max 0 (8 - length part0)) ' '
-  in part0 ++ pad0 ++ " <- " ++ showIns sh op
-showSL sh (SL2 dst1 dst2 op) =
-  let part0 = sh dst1 ++ ", " ++ sh dst2
-      pad0 = replicate (max 0 (8 - length part0)) ' '
-  in part0 ++ pad0 ++ " <- " ++ showIns sh op
+showR :: R -> Doc
+showR = text . map toLower . show
 
-showAnnot :: (a -> String) -> Annot a -> String
-showAnnot sh (Annot label body comment) =
-  let part0 = case label of {"" -> ""; _ -> label ++ ":"}
-      pad0 = replicate (max 0 (10 - length part0)) ' '
-      part01 = part0 ++ pad0 ++ sh body
-      pad1 = replicate (max 0 (45 - length part01)) ' '
-  in case comment of
-    "" -> part01
-    _  -> part01 ++ pad1 ++ "; " ++ comment
+showR8bit :: R8bit -> Doc
+showR8bit = text . map toLower . show
 
-c1 :: Annot Asm1
-c1 = Annot ".loop" (SL1 (Bare (RawR RAX)) (Neutral (Bare (RawI 5)))) "nothing to see"
-c11 = Annot "" (SL1 (Bare (RawR RAX)) (Neutral (Bare (RawI 5)))) ""
+showMemForm :: MemForm -> Doc
+showMemForm m = text "[" <> showSum (f m) <> text "]" where
+  f (M00 n)          = [showN n]
+  f (M01 r s n)      = [showScale r s, showN n]
+  f (M10 name n)     = [text name, showN n]
+  f (M11 name r s n) = [text name, showScale r s, showN n]
+
+showN :: Int -> Doc
+showN = text . show
+
+showSum :: [Doc] -> Doc
+showSum = joinDocs (text " + ")
+
+showScale :: R -> Int -> Doc
+showScale r s = showR r <> text "*" <> showN s
+
+showD :: D -> Doc
+showD (DN n)  = text (show n)
+showD (DC cs) = text "'" <> text cs <> text "'"
+
+showCommas :: [Doc] -> Doc
+showCommas = joinDocs (text ", ")
+
+showIndent :: String -> Doc -> Doc
+showIndent header body =
+  let alignSpace = replicate (max 1 (8 - length header)) ' '
+  in text header <> text alignSpace <> body
+
+joinDocs :: Doc -> [Doc] -> Doc
+joinDocs sep []     = nil
+joinDocs sep [d]    = d
+joinDocs sep (d:ds) = d <> sep <> joinDocs sep ds
 
 
-c2 :: Annot Asm2
-c2 = Annot ".loop" (SL1 (Bare (Right (RawR RAX))) (Plus (Bare (Left 3)) (Bare (Right (RawI 5))))) "nothing to see"
 
 
-dumpAsm1 :: [Annot Asm1] -> String
-dumpAsm1 = unlines . map (showAnnot showAsm1)
 
-dumpAsm2 :: [Annot Asm2] -> String
-dumpAsm2 = unlines . map (showAnnot showAsm2)
+-- | document type for asm output
 
+data Doc =
+  Nil |
+  Newline |
+  Tab |
+  Text String |
+  Doc :<> Doc
 
-default (Int)
-c18a = Annot ".18" (SL1 (Bare (RawR RDI)) (Neutral $ Bare (RawS 1))) "fmt"
-c18b = Annot "" (SL1 (Bare (RawR RSI)) (Neutral $ Bare (RawS 2))) "i"
-c18c = Annot "" (SL1 (Bare (RawR RAX)) (Call (Bare $ RawG "char") [Bare (RawR RDI), Bare (RawR RSI)])) ""
-c18d = Annot "" (SL0 (Increment (Bare (RawS 2)))) "i++"
-c18e = Annot "" (SL1 (Bare (RawS 3)) (Neutral (Bare (RawR RAX)))) "c <- rax"
-c18f = Annot "" (SL1 (Bare RawF) (Compare (Bare (RawR RAX)) (Bare (RawI (ord '%'))))) ""
-c18g = Annot "" (SL0 (JumpNotEqual ".21")) ""
-{-
-.18: mov rdi, [fmt]
-     mov rsi, [i] ; remember to increment i
-     call char    ; remember to move what's currently in rax into [c]
-     inc [i]
-     mov [c], rax
-     cmp rax, '%'
-     jne 21
--}
-{-
-.18:      rdi      <- s[1]                   ; fmt
-          rsi      <- s[2]                   ; i
-          rax      <- call char(rdi, rsi)
-                      s[2]++                 ; i++
-          s[3]     <- rax                    ; c <- rax
-          (flags)  <- rax cmp 37
-                      jne .21
--}
+flatten :: Doc -> String
+flatten d = f d "" where
+  f Nil rest         = rest
+  f Newline rest     = '\n' : rest
+  f Tab rest         = '\t' : rest
+  f (Text str) rest  = str ++ rest
+  f (d1 :<> d2) rest = f d1 (f d2 rest)
+
+nil :: Doc
+nil = Nil
+
+newline :: Doc
+newline = Newline
+
+tab :: Doc
+tab = Tab
+
+text :: String -> Doc
+text = Text
+
+instance Semigroup Doc where
+  (<>) = (:<>)
+
+instance Monoid Doc where
+  mempty = nil
