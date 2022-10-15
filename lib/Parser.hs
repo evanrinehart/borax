@@ -46,7 +46,7 @@ binaryOp =
   Minus <$ char '-' <|>
   Modulo <$ char '%' <|>
   Times <$ char '*' <|>
-  Division <$ char '/'
+  Quotient <$ char '/'
 
 ival :: Parser IVal
 ival =
@@ -439,7 +439,7 @@ multOp :: Parser (Expr -> Expr -> Expr)
 multOp =
   wrapbin Modulo   <$ (char '%' >> remspace) <|>
   wrapbin Times    <$ (char '*' >> remspace) <|>
-  wrapbin Division <$ (char '/' >> remspace)
+  wrapbin Quotient <$ (char '/' >> remspace)
 
 multChain :: Parser Expr
 multChain = chainl1 unaryExpr multOp
