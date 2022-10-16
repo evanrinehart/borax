@@ -44,7 +44,7 @@ data AsmF a =
   NEG a
   
 
-data Operand = OpK K | OpR R | OpY String | OpM MemForm
+data Operand = OK K | OG R | OY String | OM MemForm
 
 data K = KN Int | KC Char
 
@@ -98,10 +98,10 @@ showData ty dats = showIndent ty (showCommas (map showD dats))
 
 showOperand :: Operand -> Doc
 showOperand = f where
-  f (OpK k) = showK k
-  f (OpR r) = showR r
-  f (OpY s) = text s
-  f (OpM m) = showMemForm m
+  f (OK k) = showK k
+  f (OG r) = showR r
+  f (OY s) = text s
+  f (OM m) = showMemForm m
 
 showK :: K -> Doc
 showK (KN n) = text (show n)

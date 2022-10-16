@@ -18,7 +18,8 @@ import Text.Megaparsec hiding (State, label)
 import Text.Megaparsec.Char hiding (newline)
 
 import qualified Expr
-import Asm hiding (K(..), showK, Operand(..), MemForm(..))
+import qualified Asm
+import Asm (R(..), showR)
 import Doc
 
 type Parser = Parsec Void String
