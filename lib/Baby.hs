@@ -363,7 +363,7 @@ toAsm :: [IRIns] -> [CodeLine]
 toAsm ins = f =<< ins where
   f :: IRIns -> [CodeLine]
   f (StabCmp mdst r opd)                = []
-  f (Stab0 dst opd)                     = [Asm.MOV (toOperand1 dst) (toOperand2 opd)]
+  f (Stab0 dst opd)                     = []
   f (Stab1 dst code opd)                = []
   f (Stab2 dst r code opd)              = []
   f (Stab2R dst opd code r)             = []
@@ -372,6 +372,7 @@ toAsm ins = f =<< ins where
   f (StabVarAddr dst x)                 = []
   f (IRCond comparison body1 body2)     = []
 
+{-
 -- location becomes
 -- r -> r
 -- extra i -> extra base - 8i
@@ -388,6 +389,7 @@ data Loc = LReg R | LExtra Int | LVar String | LMem MemForm
 
 toOperand2 :: Operand -> Asm.Operand
 toOperand2
+-}
 
 -- | Pretty printers
 
