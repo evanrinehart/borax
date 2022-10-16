@@ -19,7 +19,7 @@ import Text.Megaparsec.Char hiding (newline)
 
 import qualified Expr
 import qualified Asm
-import Asm (R(..), showR)
+import Asm (R(..), showR, CodeLine(..), showCodeLines)
 import Doc
 
 type Parser = Parsec Void String
@@ -101,10 +101,6 @@ forget n = replicateM_ n $ do
 temp :: IRGen Loc
 temp = state (\(l:ls) -> (l, ls))
 
-baby :: String -> IO ()
-baby str = do
-  let code = evalState (ir RAX (parseE str)) allTheTemps
-  putStr (flatten $ ppIR code) -- has its own endline
 
 ir :: R -> E -> IRGen [IRIns]
 ir dst (EK k)   = return [LReg dst `Stab0` OK k]
@@ -355,6 +351,46 @@ irlv dst _ = error "sorry, no lvalue"
 
 
 
+baby :: String -> IO ()
+baby str = do
+  let ircode = evalState (ir RAX (parseE str)) allTheTemps
+  let asm = toAsm ircode
+  putStrLn (flatten (showCodeLines asm))
+
+-- | Generate asm from ir
+
+toAsm :: [IRIns] -> [CodeLine]
+toAsm ins = f =<< ins where
+  f :: IRIns -> [CodeLine]
+  f (StabCmp mdst r opd)                = []
+  f (Stab0 dst opd)                     = [Asm.MOV (toOperand1 dst) (toOperand2 opd)]
+  f (Stab1 dst code opd)                = []
+  f (Stab2 dst r code opd)              = []
+  f (Stab2R dst opd code r)             = []
+  f (Stab2K dst opd code k)             = []
+  f (StabCall dst n fun args)           = []
+  f (StabVarAddr dst x)                 = []
+  f (IRCond comparison body1 body2)     = []
+
+-- location becomes
+-- r -> r
+-- extra i -> extra base - 8i
+-- var x -> depends, global, local, etc
+-- memforms -> formulaic translation
+toOperand1 :: Loc -> Asm.Operand
+toOperand1 = f where
+  f (LReg r)   = Asm.OG r
+  f (LExtra i) = error "where is extra base"
+  f (LVar x)   = error "depends"
+  f (LMem _)   = error "translate memform"
+  
+data Loc = LReg R | LExtra Int | LVar String | LMem MemForm
+
+toOperand2 :: Operand -> Asm.Operand
+toOperand2
+
+-- | Pretty printers
+
 ppE :: E -> Doc
 ppE (EK k) = showK k
 ppE (EVar x) = text x
@@ -428,40 +464,10 @@ showConfig (C2 l) = text "push(" <> showLoc l <> text ")"
 
 
 
--- | Expr parser
-
-parseE :: String -> E
-parseE str = case runParser (space >> anyExpr) "unknown" str of
-  Left eb -> error (show eb)
-  Right e -> e
 
 
-unopKeyword :: Unop -> String
-unopKeyword Minus = "negate"
-unopKeyword Tilde = "complement"
-unopKeyword Bang  = "not"
 
-binopKeyword :: Binop -> String
-binopKeyword = f where
-  f BAdd = "+"
-  f BSub = "-"
-  f BMul = "*"
-  f BDiv = "/"
-  f BMod = "%"
-  f BShr = ">>"
-  f BShl = "<<"
-  f BAnd = "&"
-  f BOr  = "|"
-  f BXor = "^"
-  f BLt  = "<"
-  f BLte = "<="
-  f BGt  = ">"
-  f BGte = ">="
-  f BEq  = "=="
-  f BNeq = "!="
-
-
--- argument expression resequencing
+-- | Argument expression resequencing
 
 data Clobbers =
   ClobbersEverything |
@@ -550,50 +556,39 @@ callreg n = f n where
   f 6 = R9
   f _ = error ("callreg " ++ show n)
 
-{-
-data Asm =
-  CMP A A |
-  MOV A A |
-  JMP String |
-  JZ String |
-  IDIV A |
-  CALL A
-    deriving Show
 
-data A =
-  RAX | RBX | RCX | RDX |
-  RDI | RSI | RBP | RSP |
-  R8  | R9  | R10 | R11 |
-  R12 | R13 | R14 | R15 |
-  IMM Int | SYM String | Brack A | Brack2 A A
-    deriving (Eq,Ord,Show)
+-- | Expression parser
 
-data Location =
-  InRegister A |
-  InExtra Int |
-  OnStack Int |
-  Global String
-    deriving (Eq,Ord,Show)
+parseE :: String -> E
+parseE str = case runParser (space >> anyExpr) "unknown" str of
+  Left eb -> error (show eb)
+  Right e -> e
 
-newtype AsmBuilder = AsmBuilder { buildAsm :: [Either String Asm] -> [Either String Asm] }
 
-instance Show AsmBuilder where
-  show (AsmBuilder f) = show (f [])
+unopKeyword :: Unop -> String
+unopKeyword Minus = "negate"
+unopKeyword Tilde = "complement"
+unopKeyword Bang  = "not"
 
-asm :: Asm -> AsmBuilder
-asm a = AsmBuilder (\rest -> Right a : rest)
+binopKeyword :: Binop -> String
+binopKeyword = f where
+  f BAdd = "+"
+  f BSub = "-"
+  f BMul = "*"
+  f BDiv = "/"
+  f BMod = "%"
+  f BShr = ">>"
+  f BShl = "<<"
+  f BAnd = "&"
+  f BOr  = "|"
+  f BXor = "^"
+  f BLt  = "<"
+  f BLte = "<="
+  f BGt  = ">"
+  f BGte = ">="
+  f BEq  = "=="
+  f BNeq = "!="
 
-label :: String -> AsmBuilder
-label l = AsmBuilder (\rest -> Left l : rest)
-
-instance Semigroup AsmBuilder where
-  AsmBuilder g <> AsmBuilder f = AsmBuilder (g . f)
-
-instance Monoid AsmBuilder where
-  mempty = AsmBuilder id
--}
-
--- expression parsers, they are factored to remove left recursion
 anyExpr :: Parser E
 anyExpr = assignChain
 
@@ -701,7 +696,7 @@ primaryEtc2 = do
   remspace
   return (\h -> ECall h args)
 
--- operator parsers
+-- | Operator parsers
 
 prefixOp :: Parser (E -> E)
 prefixOp =

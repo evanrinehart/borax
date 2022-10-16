@@ -11,6 +11,7 @@ data CodeLine =
   Label String |
   Code Asm |
   Data String [D]
+    deriving Show
 
 type Asm = AsmF Operand
 
@@ -42,11 +43,14 @@ data AsmF a =
   OR a a |
   XOR a a |
   NEG a
+    deriving Show
   
 
 data Operand = OK K | OG R | OY String | OM MemForm
+  deriving Show
 
 data K = KN Int | KC Char
+  deriving Show
 
 data R =
   RAX | RBX | RCX | RDX |
@@ -64,8 +68,10 @@ data MemForm =
   M01 R Int Int |
   M10 String Int |
   M11 String R Int Int
+    deriving Show
 
 data D = DN Int | DC String
+  deriving Show
 
 
 -- | Pretty print functions for output [CodeLine]
