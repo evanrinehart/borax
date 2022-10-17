@@ -311,8 +311,8 @@ autoVariablesInBody = execWriter . go where
 
 
 
-compile :: Boron -> Either String (Borate LinkMe)
-compile (Boron defs) = go [] [] [] defs where
+compile :: FileAST -> Either String (Borate LinkMe)
+compile (FileAST defs) = go [] [] [] defs where
   go as vs fs [] = return (Borate as vs fs)
   go as vs fs (DefV1 _ name Nothing : more) = go (x:as) vs fs more where
     x = (name, LMJust 0)

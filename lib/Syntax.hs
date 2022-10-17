@@ -6,7 +6,7 @@ import Data.List
 
 import Expr
 
-data Boron = Boron [Definition] deriving (Show)
+data FileAST = FileAST [Definition] deriving (Show)
 
 type Name = String
 

@@ -13,12 +13,12 @@ import Syntax
 type Parser = Parsec Void String
 --type Error = ParseErrorBundle String Void
 
-parse :: String -> String -> Either String Boron
+parse :: String -> String -> Either String FileAST
 parse filename text = case runParser program filename text of
   Right p -> return p
   Left bundle -> Left (errorBundlePretty bundle)
 
-parseFile :: FilePath -> IO Boron
+parseFile :: FilePath -> IO FileAST
 parseFile path = do
   txt <- readFile path
   case runParser program path txt of
@@ -139,11 +139,11 @@ remspace1 = do
 getLineNo :: Parser Int
 getLineNo = (unPos . sourceLine) <$> getSourcePos
 
-program :: Parser Boron
+program :: Parser FileAST
 program = do
   remspace
   defs <- many (try definition0 <|> try definition1 <|> definition2)
-  return (Boron defs)
+  return (FileAST defs)
 
 definition0 :: Parser Definition
 definition0 = do
