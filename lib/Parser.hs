@@ -27,114 +27,14 @@ parseFile path = do
       putStrLn (errorBundlePretty bundle)
       exitFailure
 
---printError :: Error -> IO ()
---printError = putStrLn . errorBundlePretty 
 
-binaryOp :: Parser BinaryOp
-binaryOp =
-  BitOr <$ char '|' <|>
-  BitAnd <$ char '&' <|>
-  Equals <$ string "==" <|>
-  NotEquals <$ string "!=" <|>
-  LessThan <$ char '<' <|>
-  LessThanEquals <$ string "<=" <|>
-  GreaterThan <$ char '>' <|>
-  GreaterThanEquals <$ string ">=" <|>
-  ShiftL <$ string "<<" <|>
-  ShiftR <$ string ">>" <|>
-  Plus <$ char '+' <|>
-  Minus <$ char '-' <|>
-  Modulo <$ char '%' <|>
-  Times <$ char '*' <|>
-  Quotient <$ char '/'
 
 ival :: Parser IVal
 ival =
   IVConst <$> constant <|>
   IVName <$> validName
 
-validName :: Parser String
-validName = do
-  c <- letterChar <|> char '_' <|> char '.'
-  cs <- many (alphaNumChar <|> char '_' <|> char '.')
-  remspace
-  case c:cs of
-    "auto"   -> fail "auto is a reserved word"
-    "extrn"  -> fail "extrn is a reserved word"
-    "case"   -> fail "case is a reserved word"
-    "if"     -> fail "if is a reserved word"
-    "while"  -> fail "while is a reserved word"
-    "switch" -> fail "switch is a reserved word"
-    "goto"   -> fail "goto is a reserved word"
-    "break"  -> fail "break is a reserved word"
-    "return" -> fail "return is a reserved word"
-    _ -> return (c : cs)
 
-constant :: Parser Constant
-constant =
-  ConstI <$> numericConstant <|>
-  ConstS <$> stringConstant <|>
-  ConstC <$> charConstant
-
-numericConstant :: Parser Int
-numericConstant = do
-  ds <- some digitChar
-  remspace
-  case ds of
-    "0"        -> return 0
-    ('0':more) -> return (funnyOctal more)
-    _          -> return (read ds)
-
-funnyOctal :: String -> Int
-funnyOctal = foldl1 (\a o -> a*8 + o) . map digitToInt
-
-stringConstant :: Parser String
-stringConstant = do
-  char '"'
-  str <- escapeSequence `manyTill` char '"'
-  remspace
-  return str
-
-charConstant :: Parser [Char]
-charConstant = do
-  char '\''
-  cs <- escapeSequence `manyTill` char '\''
-  remspace
-  return cs
-
-escapeSequence :: Parser Char
-escapeSequence = do
-  c <- printChar
-  case c of
-    '*' -> do
-      c2 <- printChar
-      case c2 of
-        '0' -> return '\0'
-        'e' -> return '\EOT'
-        '(' -> return '{'
-        ')' -> return '}'
-        't' -> return '\t'
-        '*' -> return '*'
-        '\'' -> return '\''
-        '"' -> return '"'
-        'n' -> return '\n'
-        _ -> fail "unknown escape sequence"
-    '\'' -> fail "empty char constant"
-    _ -> return c  
-
-remspace :: Parser ()
-remspace = do
-  space
-  many $ do
-    string "/*"
-    anySingle `skipManyTill` (string "*/")
-    space
-  return ()
-
-remspace1 :: Parser ()
-remspace1 = do
-  spaceChar
-  remspace
 
 getLineNo :: Parser Int
 getLineNo = (unPos . sourceLine) <$> getSourcePos
@@ -354,19 +254,100 @@ nullStatement = do
   return (NullStatement lineNo)
 
 
--- expression parsers
-nameExpr :: Parser Expr
-nameExpr = do
-  n <- validName
+-- | Expression parser
+
+parseE :: String -> E
+parseE str = case runParser (space >> anyExpr) "unknown" str of
+  Left eb -> error (show eb)
+  Right e -> e
+
+
+unopKeyword :: Unop -> String
+unopKeyword Minus = "negate"
+unopKeyword Tilde = "complement"
+unopKeyword Bang  = "not"
+
+anyExpr :: Parser E
+anyExpr = assignChain
+
+assignChain :: Parser E
+assignChain = chainr1 ternaries assignmentOp
+
+ternaries :: Parser E
+ternaries = do
+  a <- bitOrChain
+  questionMaybe <- optional (char '?')
   remspace
-  return (Fix (ExName n))
+  case questionMaybe of
+    Nothing -> return a
+    Just _ -> do
+      b <- anyExpr
+      char ':'
+      remspace
+      c <- anyExpr
+      return (ECond a b c)
 
-constExpr :: Parser Expr
+bitOrChain :: Parser E
+bitOrChain = chainl1 bitAndChain op where
+  op = wrapbin BOr <$ (char '|' >> remspace)
+
+bitAndChain :: Parser E
+bitAndChain = chainl1 equalityChain op where
+  op = wrapbin BAnd <$ (char '&' >> remspace)
+
+equalityChain :: Parser E
+equalityChain = chainl1 relationalChain op where
+  op =
+    wrapbin BNeq <$ (string "!=" >> remspace) <|>
+    wrapbin BEq  <$ try (string "==" >> notFollowedBy (char '=') >> remspace)
+
+relationalChain :: Parser E
+relationalChain = chainl1 shiftChain op where
+  op =
+    wrapbin BLte <$ (string "<=" >> remspace) <|>
+    wrapbin BLt  <$ (   char '<' >> remspace) <|>
+    wrapbin BGte <$ (string ">=" >> remspace) <|>
+    wrapbin BGt  <$ (   char '>' >> remspace)
+
+shiftChain :: Parser E
+shiftChain = chainl1 additiveChain shiftOp
+
+additiveChain :: Parser E
+additiveChain = chainl1 multChain additiveOp
+
+multChain :: Parser E
+multChain = chainl1 unaryExpr multOp
+
+unaryExpr :: Parser E
+unaryExpr = do
+  wrappers <- reverse <$> many prefixOp
+  body <- primaryWithPostOp
+  return (foldl (\e f -> f e) body wrappers)
+
+primaryWithPostOp :: Parser E
+primaryWithPostOp = do
+  body <- primaryExpr
+  wrappers <- many postfixOp
+  return (foldl (\e f -> f e) body wrappers)
+
+primaryExpr :: Parser E
+primaryExpr = do
+  h <- nameExpr <|> constExpr <|> parenExpr
+  suffixes <- many (primaryEtc1 <|> primaryEtc2)
+  return (foldl (.) id suffixes h)
+
+nameExpr :: Parser E
+nameExpr = do
+  x <- validName
+  remspace
+  return (EVar x)
+
+constExpr :: Parser E
 constExpr = do
-  c <- constant
-  return (Fix (ExConst c))
+  k <- constant
+  return (EK k)
 
-parenExpr :: Parser Expr
+parenExpr :: Parser E
 parenExpr = do
   char '('
   remspace
@@ -375,144 +356,76 @@ parenExpr = do
   remspace
   return body
 
-primaryExpr :: Parser Expr
-primaryExpr = do
-  h <- nameExpr <|> constExpr <|> parenExpr
-  suffixes <- many (primaryEtc1 <|> primaryEtc2)
-  return (foldl (.) id suffixes h)
-
-primaryEtc1 :: Parser (Expr -> Expr)
+primaryEtc1 :: Parser (E -> E)
 primaryEtc1 = do
   char '['
   remspace
   body <- anyExpr
   char ']'
   remspace
-  return (\h -> Fix (ExVector h body))
+  return (\h -> EVect h body)
 
-primaryEtc2 :: Parser (Expr -> Expr)
+primaryEtc2 :: Parser (E -> E)
 primaryEtc2 = do
   char '('
   remspace
   args <- anyExpr `sepBy` (char ',' >> remspace)
   char ')'
   remspace
-  return (\h -> Fix (ExFunc h args))
-  
+  return (\h -> ECall h args)
 
-prefixOp :: Parser (Expr -> Expr)
+-- | Operator parsers
+
+prefixOp :: Parser (E -> E)
 prefixOp =
-  wrapunary LogicNot <$ (char '!' >> remspace) <|>
-  wrapunary Negative <$ (char '-' >> remspace) <|>
-  wrapunary BitComplement <$ (char '~' >> remspace) <|>
+  wrapunary Bang <$ (char '!' >> remspace) <|>
+  wrapunary Tilde <$ (char '~' >> remspace) <|>
   starE <$ (char '*' >> remspace) <|>
   ampE  <$ (char '&' >> remspace) <|>
   plusPlusE   <$ (string "++" >> remspace) <|>
-  minusMinusE <$ (string "--" >> remspace)
+  minusMinusE <$ (string "--" >> remspace) <|>
+  wrapunary Minus <$ (char '-' >> remspace)
 
-postfixOp :: Parser (Expr -> Expr)
+postfixOp :: Parser (E -> E)
 postfixOp =
   ePlusPlus   <$ (string "++" >> remspace) <|>
   eMinusMinus <$ (string "--" >> remspace)
 
-ePlusPlus e = Fix (ExPostInc e)
-eMinusMinus e = Fix (ExPostDec e)
-plusPlusE e = Fix (ExPreInc e)
-minusMinusE e = Fix (ExPreDec e)
-ampE e = Fix (ExAmp e)
-starE e = Fix (ExStar e)
-wrapunary op e = Fix (ExUnary op e)
+ePlusPlus e   = EPFix "_++" e
+eMinusMinus e = EPFix "_--" e
+plusPlusE e   = EPFix "++_" e
+minusMinusE e = EPFix "--_" e
+ampE e        = EAmp e
+starE e       = EStar e
+wrapunary op e = EUn op e
 
-primaryWithPostOp :: Parser Expr
-primaryWithPostOp = do
-  body <- primaryExpr
-  wrappers <- many postfixOp
-  return (foldl (\e f -> f e) body wrappers)
-
-unaryExpr :: Parser Expr
-unaryExpr = do
-  wrappers <- reverse <$> many prefixOp
-  body <- primaryWithPostOp
-  return (foldl (\e f -> f e) body wrappers)
-
-multOp :: Parser (Expr -> Expr -> Expr)
+multOp :: Parser (E -> E -> E)
 multOp =
-  wrapbin Modulo   <$ (char '%' >> remspace) <|>
-  wrapbin Times    <$ (char '*' >> remspace) <|>
-  wrapbin Quotient <$ (char '/' >> remspace)
+  wrapbin BMod <$ (char '%' >> remspace) <|>
+  wrapbin BMul <$ (char '*' >> remspace) <|>
+  wrapbin BDiv <$ (char '/' >> remspace)
 
-multChain :: Parser Expr
-multChain = chainl1 unaryExpr multOp
-
-additiveOp :: Parser (Expr -> Expr -> Expr)
+additiveOp :: Parser (E -> E -> E)
 additiveOp = 
-  wrapbin Plus  <$ (char '+' >> remspace) <|>
-  wrapbin Minus <$ (char '-' >> remspace)
+  wrapbin BAdd <$ (char '+' >> remspace) <|>
+  wrapbin BSub <$ (char '-' >> remspace)
 
-additiveChain :: Parser Expr
-additiveChain = chainl1 multChain additiveOp
-
-shiftOp :: Parser (Expr -> Expr -> Expr)
+shiftOp :: Parser (E -> E -> E)
 shiftOp =
-  wrapbin ShiftL <$ (string "<<" >> remspace) <|>
-  wrapbin ShiftR <$ (string ">>" >> remspace)
+  wrapbin BShl <$ (string "<<" >> remspace) <|>
+  wrapbin BShr <$ (string ">>" >> remspace)
 
-shiftChain :: Parser Expr
-shiftChain = chainl1 additiveChain shiftOp
+wrapbin :: Binop -> E -> E -> E
+wrapbin op e1 e2 = EBin op e1 e2
 
-relationalChain :: Parser Expr
-relationalChain = chainl1 shiftChain op where
-  op =
-    wrapbin LessThan <$ (char '<' >> remspace) <|>
-    wrapbin LessThanEquals <$ (string "<=" >> remspace) <|>
-    wrapbin GreaterThan <$ (char '>' >> remspace) <|>
-    wrapbin GreaterThanEquals <$ (string ">=" >> remspace)
-
-equalityChain :: Parser Expr
-equalityChain = chainl1 relationalChain op where
-  op =
-    wrapbin Equals <$ (string "==" >> remspace) <|>
-    wrapbin NotEquals <$ (string "!=" >> remspace)
-
-
-bitOrChain :: Parser Expr
-bitOrChain = chainl1 bitAndChain op where
-  op = wrapbin BitOr <$ (char '|' >> remspace)
-
-bitAndChain :: Parser Expr
-bitAndChain = chainl1 equalityChain op where
-  op = wrapbin BitAnd <$ (char '&' >> remspace)
-
-wrapbin :: BinaryOp -> Expr -> Expr -> Expr
-wrapbin op e1 e2 = Fix (ExBinary op e1 e2)
-
-
--- parse an assignment operator, =, =+, etc
-assignmentOp :: Parser (Expr -> Expr -> Expr)
+assignmentOp :: Parser (E -> E -> E)
 assignmentOp = do
   char '='
   mop <- optional binaryOp
   remspace
   case mop of
-    Nothing -> return (\e1 e2 -> Fix (ExAssign e1 e2))
-    Just op -> return (\e1 e2 -> Fix (ExAssignOp op e1 e2))
-
-assignChain :: Parser Expr
-assignChain = chainr1 ternaries assignmentOp
-
-ternaries :: Parser Expr
-ternaries = do
-  a <- bitOrChain 
-  questionMaybe <- optional (char '?')
-  remspace
-  case questionMaybe of
-    Nothing -> return a
-    Just _ -> do
-      b <- ternaries
-      char ':'
-      remspace
-      c <- ternaries
-      return (Fix (ExTernary a b c))
+    Nothing -> return (\e1 e2 -> EAssign e1 e2)
+    Just op -> return (\e1 e2 -> EAssignOp op e1 e2)
 
 chainl1 :: Parser term -> Parser (term -> term -> term) -> Parser term
 chainl1 term op = do
@@ -540,5 +453,110 @@ chainr1 term op = do
           builder <- loop
           return (\pre -> pre `combine` builder t)
 
-anyExpr :: Parser Expr
-anyExpr = assignChain
+remspace :: Parser ()
+remspace = do
+  space
+  many $ do
+    string "/*"
+    anySingle `skipManyTill` (string "*/")
+    space
+  return ()
+
+remspace1 :: Parser ()
+remspace1 = do
+  spaceChar
+  remspace
+
+binaryOp :: Parser Binop
+binaryOp =
+  BNeq <$ string "!=" <|>
+  snowflakeEq <|>
+  BShl <$ string "<<" <|>
+  BShr <$ string ">>" <|>
+  BLte <$ string "<=" <|>
+  BGte <$ string ">=" <|>
+  BLt  <$ char '<' <|>
+  BGt  <$ char '>' <|>
+  BOr  <$ char '|' <|>
+  BAnd <$ char '&' <|>
+  BAdd <$ char '+' <|>
+  BSub <$ char '-' <|>
+  BMod <$ char '%' <|>
+  BMul <$ char '*' <|>
+  BDiv <$ char '/'
+
+snowflakeEq :: Parser Binop
+snowflakeEq = do
+  string "=="
+  notFollowedBy (char '=')
+  return BEq
+
+constant :: Parser K
+constant =
+  KN <$> numericConstant <|>
+  KStr <$> stringConstant <|>
+  charConstant
+
+numericConstant :: Parser Int
+numericConstant = do
+  ds <- some digitChar
+  remspace
+  case ds of
+    "0"        -> return 0
+    ('0':more) -> return (funnyOctal more)
+    _          -> return (read ds)
+
+funnyOctal :: String -> Int
+funnyOctal = foldl1 (\a o -> a*8 + o) . map digitToInt
+
+stringConstant :: Parser String
+stringConstant = do
+  char '"'
+  str <- escapeSequence `manyTill` char '"'
+  remspace
+  return str
+
+charConstant :: Parser K
+charConstant = do
+  char '\''
+  cs <- escapeSequence `manyTill` char '\''
+  remspace
+  return (KC cs)
+
+escapeSequence :: Parser Char
+escapeSequence = do
+  c <- printChar
+  case c of
+    '*' -> do
+      c2 <- printChar
+      case c2 of
+        '0' -> return '\0'
+        'e' -> return '\EOT'
+        '(' -> return '{'
+        ')' -> return '}'
+        't' -> return '\t'
+        '*' -> return '*'
+        '\'' -> return '\''
+        '"' -> return '"'
+        'n' -> return '\n'
+        _ -> fail "unknown escape sequence"
+    '\'' -> fail "empty char constant"
+    _ -> return c
+
+validName :: Parser String
+validName = do
+  c <- letterChar <|> char '_' <|> char '.'
+  cs <- many (alphaNumChar <|> char '_' <|> char '.')
+  remspace
+  case c:cs of
+    "auto"   -> fail "auto is a reserved word"
+    "extrn"  -> fail "extrn is a reserved word"
+    "case"   -> fail "case is a reserved word"
+    "if"     -> fail "if is a reserved word"
+    "while"  -> fail "while is a reserved word"
+    "switch" -> fail "switch is a reserved word"
+    "goto"   -> fail "goto is a reserved word"
+    "break"  -> fail "break is a reserved word"
+    "return" -> fail "return is a reserved word"
+    _ -> return (c : cs)
+

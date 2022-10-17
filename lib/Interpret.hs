@@ -10,7 +10,6 @@ import Data.IntMap as IM hiding (map, lookup)
 import qualified Data.IntMap as IM 
 import Data.Map as M hiding (map, lookup, drop)
 import qualified Data.Map as M 
-import Data.Fix
 
 import Data.Bits
 
@@ -100,89 +99,89 @@ specialObjectLocs = M.fromList
 
 
 
-evalR :: Monad m => ExprOf Expr -> Eval m Int
-evalR (ExAssign (Fix e1) (Fix e2)) = do
+evalR :: Monad m => E -> Eval m Int
+evalR (EAssign e1 e2) = do
   addr <- evalL e1
   val  <- evalR e2
   storeAt addr val -- could cause i/o now
   return val
-evalR (ExAssignOp binop (Fix e1) (Fix e2)) = do
+evalR (EAssignOp binop e1 e2) = do
   addr <- evalL e1
   val1 <- loadFrom addr -- I/O?
   val2 <- evalR e2
   let val3 = arith2 binop val1 val2
   storeAt addr val3 -- I/O?
   return val3
-evalR (ExPreInc (Fix ex)) = do
-  addr <- evalL ex
-  val  <- loadFrom addr -- could cause i/o now
-  let val' = val + 1
-  storeAt addr val' -- could cause i/o now
-  return val'
-evalR (ExPreDec (Fix ex)) = do
-  addr <- evalL ex
-  val  <- loadFrom addr -- could cause i/o now
-  let val' = val - 1
-  storeAt addr val' -- could cause i/o now
-  return val'
-evalR (ExPostInc (Fix ex)) = do
-  addr <- evalL ex
-  val  <- loadFrom addr -- could cause i/o now
-  let val' = val + 1
-  storeAt addr val' -- could cause i/o now
-  return val
-evalR (ExPostDec (Fix ex)) = do
-  addr <- evalL ex
-  val  <- loadFrom addr -- could cause i/o now
-  let val' = val - 1
-  storeAt addr val' -- could cause i/o now
-  return val
-
-evalR (ExConst k) = do
+evalR (EPFix code ex) = case code of
+  "_++" -> do
+    addr <- evalL ex
+    val  <- loadFrom addr -- could cause i/o now
+    let val' = val + 1
+    storeAt addr val' -- could cause i/o now
+    return val
+  "_--" -> do
+    addr <- evalL ex
+    val  <- loadFrom addr -- could cause i/o now
+    let val' = val - 1
+    storeAt addr val' -- could cause i/o now
+    return val
+  "++_" -> do
+    addr <- evalL ex
+    val  <- loadFrom addr -- could cause i/o now
+    let val' = val + 1
+    storeAt addr val' -- could cause i/o now
+    return val'
+  "--_" -> do
+    addr <- evalL ex
+    val  <- loadFrom addr -- could cause i/o now
+    let val' = val - 1
+    storeAt addr val' -- could cause i/o now
+    return val'
+evalR (EK k) = do
   f <- getStringFinder
   return (evalConstant f k)
-evalR (ExName name) = do
+evalR (EVar name) = do
   addr <- decodeName name -- local? extrn? function? label?
   loadFrom addr -- could cause i/o now
-evalR (ExUnary LogicNot (Fix ex)) = do
+evalR (EUn Bang ex) = do
   val <- evalR ex
   return (if val==0 then 1 else 0)
-evalR (ExUnary Negative (Fix ex)) = do
+evalR (EUn Minus ex) = do
   val <- evalR ex
   return (negate val)
-evalR (ExUnary BitComplement (Fix ex)) = do
+evalR (EUn Tilde ex) = do
   val <- evalR ex
   return (complement val)
-evalR (ExBinary binop (Fix ex1) (Fix ex2)) = do
+evalR (EBin binop ex1 ex2) = do
   val1 <- evalR ex1
   val2 <- evalR ex2
   return (arith2 binop val1 val2)
-evalR (ExTernary (Fix ex1) (Fix ex2) (Fix ex3)) = do
+evalR (ECond ex1 ex2 ex3) = do
   val <- evalR ex1
   if val==0
     then evalR ex3
     else evalR ex2
-evalR (ExStar (Fix ex)) = do
+evalR (EStar ex) = do
   addr <- evalR ex
   loadFrom addr -- could cause i/o now
-evalR (ExAmp (Fix ex)) = do
+evalR (EAmp ex) = do
   addr <- evalL ex
   return addr
-evalR (ExFunc (Fix exfun) exargs) = do
+evalR (ECall exfun exargs) = do
   funaddr <- evalL exfun
-  argvals <- mapM (evalR . unFix) exargs
+  argvals <- mapM evalR exargs
   callFunction funaddr argvals
-evalR (ExVector (Fix ex1) (Fix ex2)) = do
+evalR (EVect ex1 ex2) = do
   base   <- evalR ex1
   offset <- evalR ex2
   loadFrom (base + offset)
 
 
 -- evaluate expression in lvalue context, i.e. compute the address of it
-evalL :: Monad m => ExprOf Expr -> Eval m Int
-evalL (ExName name)    = decodeName name
-evalL (ExStar (Fix ex))      = evalR ex -- section 4.2.2
-evalL (ExVector (Fix e1) (Fix e2)) = do
+evalL :: Monad m => E -> Eval m Int
+evalL (EVar name)     = decodeName name
+evalL (EStar ex)      = evalR ex -- section 4.2.2
+evalL (EVect e1 e2) = do
   base   <- evalR e1
   offset <- evalR e2
   return (base + offset)
@@ -200,30 +199,30 @@ callFunction funaddr argvals = do
   pops (length argvals)
   return r
 
-runStatement :: Monad m => CodeGraph Expr -> Int -> Eval m Int
+runStatement :: Monad m => CodeGraph E -> Int -> Eval m Int
 runStatement gr i =
   let Node _ opcode = gr IM.! i in
   case opcode of
     Goto next       -> runStatement gr next
-    IfGoto (Fix ex) n1 n2 -> do
+    IfGoto ex n1 n2 -> do
       val <- evalR ex
       runStatement gr (if val==0 then n2 else n1)
-    Return (Fix ex)       -> evalR ex
-    Eval (Fix ex) next    -> do
+    Return ex       -> evalR ex
+    Eval ex next    -> do
       _ <- evalR ex
       runStatement gr next
     Null            -> return 0
-    Switch (Fix ex) table next -> do
+    Switch ex table next -> do
       val <- evalR ex
       switchLookup table val >>= \case
         Nothing -> runStatement gr next
         Just n  -> runStatement gr n
 
 -- further compilation can skip this computation
-switchLookup :: Monad m => [(Constant,Int)] -> Int -> Eval m (Maybe Int)
+switchLookup :: Monad m => [(K,Int)] -> Int -> Eval m (Maybe Int)
 switchLookup [] _ = return Nothing
 switchLookup ((k,n):more) y = do
-  x <- evalR (ExConst k)
+  x <- evalR (EK k)
   if x == y
     then return (Just n)
     else switchLookup more y
@@ -241,10 +240,10 @@ storeAt addr val = do
   -- FIXME this needs to check for mmio before accessing heap
   heapPoke addr val
   
-evalConstant :: (String -> Int) -> Constant -> Int
-evalConstant strings (ConstI n)   = fromIntegral n
-evalConstant strings (ConstC cs)  = packChars cs
-evalConstant strings (ConstS str) = strings str
+evalConstant :: (String -> Int) -> K -> Int
+evalConstant strings (KN n)     = fromIntegral n
+evalConstant strings (KC cs)    = packChars cs
+evalConstant strings (KStr str) = strings str
 
 getStringFinder :: Monad m => Eval m (String -> Int)
 getStringFinder = do
@@ -337,23 +336,24 @@ heapPoke 13 val = do
   return ()
 heapPoke addr val = modify (\mch -> mch { machMemory = Heap.poke addr val (machMemory mch) })
 
-arith2 :: BinaryOp -> Int -> Int -> Int
+arith2 :: Binop -> Int -> Int -> Int
 arith2 binop val1 val2 = case binop of
-  BitOr -> val1 .|. val2
-  BitAnd -> val1 .&. val2
-  Equals -> if val1 == val2 then 1 else 0
-  NotEquals -> if val1 /= val2 then 1 else 0
-  LessThan -> if val1 < val2 then 1 else 0
-  LessThanEquals -> if val1 <= val2 then 1 else 0
-  GreaterThan -> if val1 > val2 then 1 else 0
-  GreaterThanEquals -> if val1 >= val2 then 1 else 0
-  ShiftL -> val1 `shiftL` val2
-  ShiftR -> val1 `rawShiftR` val2
-  Plus -> val1 + val2
-  Minus -> val1 - val2
-  Modulo -> val1 `mod` val2
-  Times -> val1 * val2
-  Quotient -> val1 `div` val2
+  BOr -> val1 .|. val2
+  BAnd -> val1 .&. val2
+  BEq -> if val1 == val2 then 1 else 0
+  BNeq -> if val1 /= val2 then 1 else 0
+  BLt -> if val1 < val2 then 1 else 0
+  BLte -> if val1 <= val2 then 1 else 0
+  BGt -> if val1 > val2 then 1 else 0
+  BGte -> if val1 >= val2 then 1 else 0
+  BShl -> val1 `shiftL` val2
+  BShr -> val1 `rawShiftR` val2
+  BAdd -> val1 + val2
+  BSub -> val1 - val2
+  BMod -> val1 `mod` val2
+  BMul -> val1 * val2
+  BDiv -> val1 `div` val2
+
 
 
 {-The binary operators << and >> are left and right shift respec-

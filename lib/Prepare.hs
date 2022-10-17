@@ -10,6 +10,7 @@ import Data.Fix
 import Syntax
 import Expr
 import PackedString
+import Doc
 
 import Data.List
 import Data.IntMap as IM hiding (filter, map)
@@ -38,15 +39,15 @@ type Compile a = ReaderT (Map String Int) (State CompileData) a
 data CompileData = CompileData
   { cdBreakable   :: [Int]
   , cdLabelMap    :: Map String Int
-  , cdSwitchTable :: Maybe [(Constant,Int)]
+  , cdSwitchTable :: Maybe [(K,Int)]
   , cdGenerator   :: Int
-  , cdGraph       :: CodeGraph Expr
+  , cdGraph       :: CodeGraph E
   } deriving Show
 
 data OpCode a =
   Goto Int |
   IfGoto a Int Int |
-  Switch a [(Constant,Int)] Int |
+  Switch a [(K,Int)] Int |
   Eval a Int |
   Return a |
   Null
@@ -68,7 +69,7 @@ data FrameObj = FrameObj
 
 data Func = Func
   { funName :: String
-  , funCode :: CodeGraph Expr
+  , funCode :: CodeGraph E
   , funAutoSize :: Int
   , funExterns :: [String]
   , funLocals :: Map String Int
@@ -80,10 +81,10 @@ data Func = Func
 
 
 instance Show a => Show (Node a) where
-  show (Node l op) = "Node(l="++show l++", "++ showOpcode op ++ ")"
+  show (Node l op) = "Node(l="++show l++", "++ "NO" ++ ")"
   
 
-compileFunction :: Statement -> (Int, CodeGraph Expr)
+compileFunction :: Statement -> (Int, CodeGraph E)
 compileFunction stmt =
   let
     -- Blank records to work with
@@ -142,8 +143,8 @@ compileStatement stmt next = go stmt next where
     let Just new = mnew
     addNode line (Switch ex new next)
     
-  go (GotoStatement line (Fix ex)) next = do
-    let ExName name = ex
+  go (GotoStatement line ex) next = do
+    let EVar name = ex
     finalLabelMap <- ask
     let target = finalLabelMap M.! name
     addNode line (Goto target)
@@ -179,13 +180,13 @@ popBreakable = modify (\s -> s { cdBreakable = tail (cdBreakable s) })
 currentBreakTarget :: Compile Int
 currentBreakTarget = gets (head . cdBreakable)
 
-swapSwitchTable :: Maybe [(Constant,Int)] -> Compile (Maybe [(Constant,Int)])
+swapSwitchTable :: Maybe [(K,Int)] -> Compile (Maybe [(K,Int)])
 swapSwitchTable sm' = do
   sm <- gets cdSwitchTable
   modify (\s -> s { cdSwitchTable = sm' })
   return sm
 
-getSwitchTable :: Int -> Compile [(Constant,Int)]
+getSwitchTable :: Int -> Compile [(K,Int)]
 getSwitchTable lineNo = do
   mtable <- gets cdSwitchTable
   case mtable of
@@ -195,16 +196,16 @@ getSwitchTable lineNo = do
 addLabel :: String -> Int -> Compile ()
 addLabel name n = modify (\s -> s { cdLabelMap = M.insert name n (cdLabelMap s) })
 
-addNodeWithId :: Int -> Node Expr -> Compile ()
+addNodeWithId :: Int -> Node E -> Compile ()
 addNodeWithId n node = modify (\s -> s { cdGraph = IM.insert n node (cdGraph s) })
 
-addNode :: Int -> OpCode Expr -> Compile Int
+addNode :: Int -> OpCode E -> Compile Int
 addNode line opcode = do
   n <- generate
   addNodeWithId n (Node line opcode)
   return n
 
-addCase :: Int -> Constant -> Int -> Compile ()
+addCase :: Int -> K -> Int -> Compile ()
 addCase lineNo k n = do
   table <- getSwitchTable lineNo
   modify (\s -> s { cdSwitchTable = Just ((k,n):table) })
@@ -218,30 +219,30 @@ generate = do
 
 -- debug print
 
-showGraph :: (a -> String) -> CodeGraph a -> String
-showGraph sh gr = unlines (Prelude.map f (IM.toList gr)) where
-  f (here, Node line op) = show here ++ ":\t" ++ g op where
-    g (Goto n) = "Goto " ++ show n
-    g (IfGoto ex n1 n2) = "IfGoto[" ++ sh ex ++ "] " ++ show n1 ++ " " ++ show n2
-    g (Eval ex next) = "Eval[" ++ sh ex ++ "] " ++ show next
-    g (Return ex) = "Return[" ++ sh ex ++ "]"
-    g Null = "Null"
-    g (Switch ex table next) = "Switch[" ++ sh ex ++ "] " ++ h table ++ " " ++ show next
-  h = showSwitchTable
+showGraph :: (a -> Doc) -> CodeGraph a -> Doc
+showGraph sh gr = joinDocs newline (map f (IM.toList gr)) where
+  f (here, Node _ op) = showN here <> text ":" <> tab <> showOpcode sh op
 
-showOpcode :: Show a => OpCode a -> String
-showOpcode = g where
-  g (Goto n) = "Goto " ++ show n
-  g (IfGoto ex n1 n2) = "IfGoto[" ++ show ex ++ "] " ++ show n1 ++ " " ++ show n2
-  g (Eval ex next) = "Eval[" ++ show ex ++ "] " ++ show next
-  g (Return ex) = "Return[" ++ show ex ++ "]"
-  g Null = "Null"
-  g (Switch ex table next) = "Switch[" ++ show ex ++ "] " ++ h table ++ " " ++ show next
-  h = showSwitchTable
+showOpcode :: (a -> Doc) -> OpCode a -> Doc
+showOpcode sh = g where
+  g (Goto n)               = showForm "Goto" (showN n) []
+  g (IfGoto ex n1 n2)      = showForm "IfGoto" (sh ex) [showN n1, showN n2]
+  g (Eval ex next)         = showForm "Eval" (sh ex) [showN next]
+  g (Return ex)            = showForm "Return" (sh ex) []
+  g Null                   = text "Null"
+  g (Switch ex table next) = showForm "Switch" (sh ex) [showSwitchTable table, showN next]
 
-showSwitchTable :: [(Constant,Int)] -> String
-showSwitchTable table = concat ["{",concat (intersperse "," (Prelude.map f table)),"}"] where
-  f (k, n) = showConstant k ++ "=>" ++ show n
+showForm :: String -> Doc -> [Doc] -> Doc
+showForm heading body straglers =
+  text heading <>
+  text "[" <> body <> text "]" <>
+  joinDocs (text " ") straglers
+
+showSwitchTable :: [(K,Int)] -> Doc
+showSwitchTable table = text "{" <> joinDocs (text ",") ps <> text "}" where
+  ps = map f table
+  f (k,n) = showK k <> text "=>" <> showN n
+  
 
 
 
@@ -348,9 +349,9 @@ makeFunc fdef@(FunctionDef _ funcname params body) =
 
 
 ivalToLinkMe :: IVal -> LinkMe
-ivalToLinkMe (IVConst (ConstI n)) = LMJust n
-ivalToLinkMe (IVConst (ConstC cs)) = LMJust (packChars cs)
-ivalToLinkMe (IVConst (ConstS str)) = LMString str
+ivalToLinkMe (IVConst (KN n)) = LMJust n
+ivalToLinkMe (IVConst (KC cs)) = LMJust (packChars cs)
+ivalToLinkMe (IVConst (KStr str)) = LMString str
 ivalToLinkMe (IVName name) = LMVariable name
         
 
@@ -389,7 +390,7 @@ labelsUsedInBody = execWriter . go where
   go (SwitchStatement _ _ stmt) = go stmt
   go _ = return ()
 
-stringsInCode :: CodeGraph Expr -> [String]
+stringsInCode :: CodeGraph E -> [String]
 stringsInCode gr = foldMap f gr where
   f (Node _ (IfGoto ex _ _)) = stringsInExpr ex
   f (Node _ (Switch ex _ _)) = stringsInExpr ex
@@ -397,10 +398,6 @@ stringsInCode gr = foldMap f gr where
   f (Node _ (Return ex))     = stringsInExpr ex
   f _ = []
 
-stringsInExpr :: Expr -> [String]
-stringsInExpr = foldMapExpr f where
-  f (ExConst (ConstS str)) = [str]
-  f _ = []
 
 
 borateStrings :: [Borate LinkMe] -> [String]
