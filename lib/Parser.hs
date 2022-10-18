@@ -28,13 +28,10 @@ parseFile path = do
       exitFailure
 
 
-
 ival :: Parser IVal
 ival =
   IVConst <$> constant <|>
   IVName <$> validName
-
-
 
 getLineNo :: Parser Int
 getLineNo = (unPos . sourceLine) <$> getSourcePos

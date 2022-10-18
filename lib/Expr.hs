@@ -105,6 +105,8 @@ cataE fk fv fcond fcall funop fbinop fass fassop fpfix famp fstar fvect = f wher
   f (EStar e1)              = fstar (f e1)
   f (EVect e1 e2)           = fvect (f e1) (f e2)
 
+
+
 showE :: E -> Doc
 showE =
   cataE
@@ -115,11 +117,17 @@ showE =
     (\unop d -> showUnop unop <> d)
     (\binop d1 d2 -> d1 <> showBinop binop <> d2)
     (\d1 d2 -> d1 <> text " = " <> d2)
-    (\binop d1 d2 -> d1 <> text " =" <> showBinop binop <> d2)
-    (\code d -> text code <> d)
+    (\binop d1 d2 -> d1 <> text " =" <> showBinop binop <> text " " <> d2)
+    (\code d -> showPfix code d)
     (\d -> text "&" <> d)
     (\d -> text "*" <> d)
     (\d1 d2 -> d1 <> text "[" <> d2 <> text "]")
+
+showPfix :: String -> Doc -> Doc
+showPfix "_++" d = d <> text "++"
+showPfix "_--" d = d <> text "--"
+showPfix "--_" d = text "--" <> d
+showPfix "++_" d = text "++" <> d
 
 stringsInExpr :: E -> [String]
 stringsInExpr =
@@ -136,3 +144,4 @@ stringsInExpr =
     (\s1 -> s1)
     (\s1 -> s1)
     (\s1 s2 -> s1 <> s2)
+

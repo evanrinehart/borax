@@ -54,3 +54,6 @@ joinDocs :: Doc -> [Doc] -> Doc
 joinDocs sep []     = nil
 joinDocs sep [d]    = d
 joinDocs sep (d:ds) = d <> sep <> joinDocs sep ds
+
+showMaybe :: (a -> Doc) -> Maybe a -> Doc
+showMaybe sh = maybe nil sh

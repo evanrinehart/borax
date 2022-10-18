@@ -4,6 +4,9 @@ import Data.Char (toLower)
 
 import Doc
 
+newtype AsmFile = AsmFile { unAsmFile :: [CodeLine] }
+  deriving Show
+
 -- | Lines of code in an asm file
 data CodeLine =
   Directive String |
@@ -132,4 +135,9 @@ showD (DC cs) = text "'" <> text cs <> text "'"
 
 showScale :: R -> Int -> Doc
 showScale r s = showR r <> text "*" <> showN s
+
+
+
+showAsmFile :: AsmFile -> Doc
+showAsmFile = showCodeLines . unAsmFile
 
