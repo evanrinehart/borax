@@ -341,24 +341,6 @@ toAsm ins = f =<< ins where
   f (StabVarAddr dst x)                 = []
   f (IRCond comparison body1 body2)     = []
 
-{-
--- location becomes
--- r -> r
--- extra i -> extra base - 8i
--- var x -> depends, global, local, etc
--- memforms -> formulaic translation
-toOperand1 :: Loc -> Asm.Operand
-toOperand1 = f where
-  f (LReg r)   = Asm.OG r
-  f (LExtra i) = error "where is extra base"
-  f (LVar x)   = error "depends"
-  f (LMem _)   = error "translate memform"
-  
-data Loc = LReg R | LExtra Int | LVar String | LMem MemForm
-
-toOperand2 :: Operand -> Asm.Operand
-toOperand2
--}
 
 -- | Pretty printers
 
