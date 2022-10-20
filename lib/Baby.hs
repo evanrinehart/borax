@@ -186,9 +186,6 @@ ir dst (EAssignOp binop (EVar x) e2) = do
 ir dst (EAssignOp binop e1 e2) = do
   (t, bs) <- uir e2
   as <- irlv dst e1
-  -- r11 <- t
-  -- *d <- *d op r11
-  --  d <- t
   forget 1
   return $
     bs ++

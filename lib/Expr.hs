@@ -6,7 +6,7 @@ data K =
   KN Int |
   KC [Char] |
   KStr String
-    deriving (Eq,Show)
+    deriving (Eq,Ord,Show)
 
 data E =
   EK K | --

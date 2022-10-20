@@ -9,7 +9,7 @@ import Expr
 
 data ExStatement =
   ExConditional E ExStatement ExStatement |
-  ExSwitch E ExStatement ExStatement |
+  ExSwitch E (Map K ExStatement) ExStatement |
   ExEval E ExStatement |
   ExGoto E |
   ExReturn |
@@ -37,46 +37,49 @@ genSym = do
   return ("$" ++ show n)
 
 entryMap :: Statement -> Map Name ExStatement
-entryMap s = emdMap (execState (genSym >>= \br -> f s ExNull br >>= tellEntry "") emdBlank) where
+entryMap s = emdMap (execState (genSym >>= \br -> f s ExNull br >>= \(code,_) -> tellEntry "" code) emdBlank) where
   f (AutoStatement l vars next)  rest br = f next rest br
   f (ExtrnStatement l vars next) rest br = f next rest br
   f (LabelStatement l name next) rest br = do
-    code <- f next rest br
+    (code,table) <- f next rest br
     tellEntry name code
-    pure code
-  f (CaseStatement l k next) rest br = f next rest br
+    pure (code,table)
+  f (CaseStatement l k next) rest br = do
+    (code,table) <- f next rest br
+    pure (code, M.insert k code table)
   f (ConditionalStatement l e s1 Nothing) rest br = do
-    code <- f s1 rest br
-    pure (ExConditional e code rest)
+    (code,table) <- f s1 rest br
+    pure (ExConditional e code rest, table)
   f (ConditionalStatement l e s1 (Just s2)) rest br = do
-    code1 <- f s1 rest br
-    code2 <- f s2 rest br
-    pure (ExConditional e code1 code2)
+    (code1,table1) <- f s1 rest br
+    (code2,table2) <- f s2 rest br
+    pure (ExConditional e code1 code2, table1 <> table2)
   f (WhileStatement l e body) rest br = do
     -- while(e) body ==> loop: if(e){ body goto loop; }
     loop' <- genSym
     br'   <- genSym
-    innerCode <- f (CompoundStatement 0 ([body, GotoStatement 0 (EVar loop')])) rest br'
+    (innerCode,table) <- f (CompoundStatement 0 [body, GotoStatement 0 (EVar loop')]) rest br'
     let code = ExConditional e innerCode rest
     tellEntry loop' code
     tellEntry br' rest
-    pure code
+    pure (code,table)
   f (SwitchStatement l e body) rest br = do
     br' <- genSym
-    code <- f body rest br'
+    (_,table) <- f body rest br'
     tellEntry br' rest
-    pure (ExSwitch e code rest)
-  f (NullStatement l) rest br = pure rest
-  f (RValueStatement l e) rest br = pure (ExEval e rest)
-  f (GotoStatement l e) _ br = pure (ExGoto e)
+    pure (ExSwitch e table rest, M.empty)
+  f (NullStatement l) rest br = pure (rest, M.empty)
+  f (RValueStatement l e) rest br = pure (ExEval e rest, M.empty)
+  f (GotoStatement l e) _ br = pure (ExGoto e, M.empty)
   f (ReturnStatement l me) _ br = case me of
-      Just e  -> pure (ExReturnE e)
-      Nothing -> pure ExReturn
-  f (BreakStatement l) rest br = pure $ ExGoto (EVar br)
-  f (CompoundStatement l [])     rest br = pure rest
+      Just e  -> pure (ExReturnE e, M.empty)
+      Nothing -> pure (ExReturn, M.empty)
+  f (BreakStatement l) rest br = pure (ExGoto (EVar br), M.empty)
+  f (CompoundStatement l [])     rest br = pure (rest, M.empty)
   f (CompoundStatement l (t:tt)) rest br = do
-    rest' <- f (CompoundStatement l tt) rest br
-    f t rest' br
+    (rest',table) <- f (CompoundStatement l tt) rest br
+    (rest'',table') <- f t rest' br
+    pure (rest'', table <> table')
 
 
 
