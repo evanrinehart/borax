@@ -2,6 +2,7 @@ module Interpreter where
 
 import Control.Monad.State
 import Data.Map as M
+import Data.Set as S
 
 import Syntax
 import Expr
@@ -79,4 +80,75 @@ entryMap s = emdMap (execState (genSym >>= \br -> f s ExNull br >>= tellEntry ""
 
 
 
+
+stringsInFile :: FileAST -> Set String
+stringsInFile (FileAST defs) = Prelude.foldl f S.empty defs where
+  f acc (DefV1 _ _ (Just iv)) = g acc iv
+  f acc (DefV1 _ _ _)         = acc
+  f acc (DefVN _ _ _ ivs)     = Prelude.foldl g acc ivs
+  f acc (DefF (FunctionDef _ _ _ body)) = stringsInStatement acc body
+  g acc (IVConst (KStr str)) = S.insert str acc
+  g acc _ = acc
+
+stringsInStatement :: Set String -> Statement -> Set String
+stringsInStatement = foldlStatement
+  (\acc _ _ -> acc)
+  (\acc _ _ -> acc)
+  (\acc _ _ -> acc)
+  (\acc _ k -> case k of KStr str -> S.insert str acc; _ -> acc)
+  (\acc _ -> acc)
+  (\acc _ e -> stringsInExpr2 acc e)
+  (\acc _ e -> stringsInExpr2 acc e)
+  (\acc _ e -> stringsInExpr2 acc e)
+  (\acc _ e -> stringsInExpr2 acc e)
+  (\acc _ me -> case me of Just e -> stringsInExpr2 acc e; _ -> acc)
+  (\acc _ e -> stringsInExpr2 acc e)
+  (\acc _ -> acc)
+  (\acc _ -> acc)
+
+stringsInExpr2 :: Set String -> E -> Set String
+stringsInExpr2 = foldlE
+  (\acc k -> case k of KStr str -> S.insert str acc; _ -> acc)
+  (\acc _ -> acc)
+  (\acc -> acc)
+  (\acc -> acc)
+  (\acc _ -> acc)
+  (\acc _ -> acc)
+  (\acc -> acc)
+  (\acc _ -> acc)
+  (\acc _ -> acc)
+  (\acc -> acc)
+  (\acc -> acc)
+  (\acc -> acc)
+
+foldlStatement ::
+  (a -> Int -> [(Name, Maybe Int)] -> a) -> --auto
+  (a -> Int -> [Name] -> a) -> -- extrn
+  (a -> Int -> Name -> a) -> -- label
+  (a -> Int -> K -> a) -> -- case
+  (a -> Int -> a) -> -- compound
+  (a -> Int -> E -> a) ->  -- conditional
+  (a -> Int -> E -> a) -> -- while
+  (a -> Int -> E -> a) -> -- switch
+  (a -> Int -> E -> a) -> -- goto
+  (a -> Int -> Maybe E -> a) -> -- return
+  (a -> Int -> E -> a) ->  -- rvalue
+  (a -> Int -> a) -> -- break
+  (a -> Int -> a) -> -- null
+  a -> Statement -> a
+foldlStatement fauto fextrn flabel fcase fcomp fcond fwhile fswitch fgoto freturn frvalue fbreak fnull = f where
+  f acc (AutoStatement l vars next)  = f (fauto acc l vars) next
+  f acc (ExtrnStatement l vars next) = f (fextrn acc l vars) next
+  f acc (LabelStatement l name next) = f (flabel acc l name) next
+  f acc (CaseStatement l k next)     = f (fcase acc l k) next
+  f acc (CompoundStatement l stmts)  = Prelude.foldl f (fcomp acc l) stmts
+  f acc (ConditionalStatement l e s1 Nothing)   = f (fcond acc l e) s1
+  f acc (ConditionalStatement l e s1 (Just s2)) = f (f (fcond acc l e) s1) s2
+  f acc (WhileStatement l e body)    = f (fwhile acc l e) body
+  f acc (SwitchStatement l e body)   = f (fswitch acc l e) body
+  f acc (RValueStatement l e)        = frvalue acc l e
+  f acc (GotoStatement l e)          = fgoto acc l e
+  f acc (NullStatement l)            = fnull acc l
+  f acc (ReturnStatement l me)       = freturn acc l me
+  f acc (BreakStatement l)           = fbreak acc l
 

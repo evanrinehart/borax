@@ -105,6 +105,33 @@ cataE fk fv fcond fcall funop fbinop fass fassop fpfix famp fstar fvect = f wher
   f (EStar e1)              = fstar (f e1)
   f (EVect e1 e2)           = fvect (f e1) (f e2)
 
+foldlE ::
+  (a -> K -> a) ->
+  (a -> String -> a) ->
+  (a -> a) ->
+  (a -> a) ->
+  (a -> Unop -> a) ->
+  (a -> Binop -> a) ->
+  (a -> a) ->
+  (a -> Binop -> a) ->
+  (a -> String -> a) ->
+  (a -> a) ->
+  (a -> a) ->
+  (a -> a) ->
+  a -> E -> a
+foldlE fk fv fcond fcall funop fbinop fass fassop fpfix famp fstar fvect = f where
+  f acc (EK k)                  = fk acc k
+  f acc (EVar x)                = fv acc x
+  f acc (ECond e1 e2 e3)        = f (f (f (fcond acc) e1) e2) e3
+  f acc (ECall efun eargs)      = foldl f (f (fcall acc) efun) eargs
+  f acc (EUn unop e1)           = f (funop acc unop) e1
+  f acc (EBin binop e1 e2)      = f (f (fbinop acc binop) e1) e2
+  f acc (EAssign e1 e2)         = f (f (fass acc) e1) e2
+  f acc (EAssignOp binop e1 e2) = f (f (fassop acc binop) e1) e2
+  f acc (EPFix code e1)         = f (fpfix acc code) e1
+  f acc (EAmp e1)               = f (famp acc) e1
+  f acc (EStar e1)              = f (fstar acc) e1
+  f acc (EVect e1 e2)           = f (f (fvect acc) e1) e2
 
 
 showE :: E -> Doc
@@ -144,4 +171,5 @@ stringsInExpr =
     (\s1 -> s1)
     (\s1 -> s1)
     (\s1 s2 -> s1 <> s2)
+
 
