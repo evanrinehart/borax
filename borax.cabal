@@ -10,7 +10,7 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:
       PackedString, Heap, Syntax, Parser, Interpret, Prepare, Link,
-      System, Asm, Expr, Baby, Doc
+      System, Asm, Expr, Baby, Doc, Interpreter
 
     hs-source-dirs: lib
 
